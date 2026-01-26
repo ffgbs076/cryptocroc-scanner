@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/scan?side=bull",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/scan?side=bear",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

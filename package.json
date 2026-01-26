@@ -9,7 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@upstash/redis": "^1.36.0",
+    "better-sqlite3": "^12.5.0",
     "next": "16.1.1",
+    "node-cron": "^4.2.1",
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
