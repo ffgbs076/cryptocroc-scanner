@@ -1,15 +1,28 @@
+// app/api/hits/route.ts
 export const runtime = "nodejs";
 
-import { kv } from "@vercel/kv";
+import { storeGet } from "@/app/lib/store";
 
-const KEY = "cryptocroc:hits";
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const side = (url.searchParams.get("side") || "bull").toLowerCase();
 
-export async function GET() {
-  let hits = 0;
-  try {
-    hits = (await kv.incr(KEY)) as number;
-  } catch {
-    hits = 0;
-  }
-  return Response.json({ ok: true, hits, ts: Date.now() });
+  const snap = await storeGet<any>(`snapshot:${side}`);
+
+  const tables = snap?.tables || snap?.data?.tables || null;
+
+  const counts = {
+    entry: tables?.entry?.length ?? 0,
+    almost: tables?.almost?.length ?? 0,
+    buildup: tables?.buildup?.length ?? 0,
+    radar: tables?.radar?.length ?? 0,
+    runner: tables?.runner?.length ?? 0,
+  };
+
+  return Response.json({
+    ok: true,
+    side,
+    ts: Date.now(),
+    counts,
+  });
 }
