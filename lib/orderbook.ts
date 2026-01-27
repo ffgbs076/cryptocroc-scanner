@@ -1,86 +1,61 @@
-export type OrderbookSignal = "CONFIRM" | "NEUTRAL" | "CONFLICT"
+// lib/orderbook.ts
+const BG = "https://api.bitget.com";
 
-export type OrderbookResult = {
-  symbol: string
-  midPrice: number
-  bidNotional: number
-  askNotional: number
-  imbalance: number
-  thinUp: boolean
-  signal: OrderbookSignal
-  reason: string
+const num = (x: any, d = 0) => {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : d;
+};
+
+export type Orderbook = {
+  bids: [number, number][];
+  asks: [number, number][];
+};
+
+export async function fetchBitgetOrderbook(symbolUSDT: string, limit = 100): Promise<Orderbook> {
+  const url =
+    `${BG}/api/v2/spot/market/orderbook?symbol=${encodeURIComponent(symbolUSDT)}` +
+    `&type=step0&limit=${limit}`;
+
+  const r = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
+  if (!r.ok) throw new Error(`Bitget orderbook failed ${symbolUSDT}: ${r.status}`);
+
+  const j = await r.json();
+  const data = j?.data;
+
+  const bids: [number, number][] = (data?.bids || [])
+    .map((b: any[]) => [num(b[0]), num(b[1])] as [number, number])
+    .filter(x => x[0] > 0 && x[1] > 0);
+
+  const asks: [number, number][] = (data?.asks || [])
+    .map((a: any[]) => [num(a[0]), num(a[1])] as [number, number])
+    .filter(x => x[0] > 0 && x[1] > 0);
+
+  return { bids, asks };
 }
 
-function safeNum(v: unknown, fallback = 0): number {
-  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN
-  return Number.isFinite(n) ? n : fallback
-}
+export function ratioWithinBand(ob: Orderbook, bandPct = 0.03): number | null {
+  if (!ob.bids.length || !ob.asks.length) return null;
 
-/**
- * Binance depth response: { bids: [[price, qty], ...], asks: [[price, qty], ...] }
- * We compute notional = price * qty for top N levels.
- */
-export function analyzeDepth(
-  symbol: string,
-  bids: Array<[string, string]>,
-  asks: Array<[string, string]>,
-  levels = 20
-): OrderbookResult {
-  const topBids = bids.slice(0, levels)
-  const topAsks = asks.slice(0, levels)
+  const bestBid = ob.bids[0][0];
+  const bestAsk = ob.asks[0][0];
+  if (!(bestBid > 0 && bestAsk > 0)) return null;
 
-  const bestBid = topBids.length ? safeNum(topBids[0][0]) : 0
-  const bestAsk = topAsks.length ? safeNum(topAsks[0][0]) : 0
-  const mid = bestBid > 0 && bestAsk > 0 ? (bestBid + bestAsk) / 2 : Math.max(bestBid, bestAsk)
+  const mid = (bestBid + bestAsk) / 2;
+  const bidMin = mid * (1 - bandPct);
+  const askMax = mid * (1 + bandPct);
 
-  let bidNotional = 0
-  let askNotional = 0
-
-  for (const [p, q] of topBids) {
-    const price = safeNum(p)
-    const qty = safeNum(q)
-    bidNotional += price * qty
-  }
-  for (const [p, q] of topAsks) {
-    const price = safeNum(p)
-    const qty = safeNum(q)
-    askNotional += price * qty
+  let bidNotional = 0;
+  for (const [p, q] of ob.bids) {
+    if (p < bidMin) break;
+    bidNotional += p * q;
   }
 
-  const denom = bidNotional + askNotional
-  const imbalance = denom > 0 ? (bidNotional - askNotional) / denom : 0 // -1..+1
-
-  // Thin liquidity check: are first few asks very small compared to median ask size?
-  // Simple proxy: if sum of top 5 ask notional is tiny, upside can move fast.
-  let askTop5 = 0
-  for (const [p, q] of topAsks.slice(0, 5)) {
-    askTop5 += safeNum(p) * safeNum(q)
-  }
-  const thinUp = askTop5 > 0 ? askTop5 < (askNotional * 0.15) : false
-
-  // Decision rules (simple & stable)
-  // Bull confirm: imbalance >= +0.12 OR thinUp true
-  // Bear confirm: imbalance <= -0.12
-  // Neutral otherwise
-  let signal: OrderbookSignal = "NEUTRAL"
-  let reason = "Orderbook is mixed"
-
-  if (imbalance >= 0.12 || thinUp) {
-    signal = "CONFIRM"
-    reason = thinUp ? "Upside liquidity looks thin (can run fast)" : "Bid side stronger than ask side"
-  } else if (imbalance <= -0.12) {
-    signal = "CONFLICT"
-    reason = "Ask side stronger than bid side"
+  let askNotional = 0;
+  for (const [p, q] of ob.asks) {
+    if (p > askMax) break;
+    askNotional += p * q;
   }
 
-  return {
-    symbol,
-    midPrice: mid,
-    bidNotional,
-    askNotional,
-    imbalance,
-    thinUp,
-    signal,
-    reason
-  }
+  if (askNotional <= 0) return null;
+  return bidNotional / askNotional;
 }
