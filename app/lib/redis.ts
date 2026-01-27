@@ -1,22 +1,20 @@
 // app/lib/redis.ts
-// Super simpele in-memory store (werkt op Vercel & lokaal)
+import { Redis } from "@upstash/redis";
 
-type Store = Map<string, any>;
-let store: Store | null = null;
+let _redis: Redis | null = null;
 
-function getStore(): Store {
-  if (!store) store = new Map();
-  return store;
-}
+export function getRedis() {
+  if (_redis) return _redis;
 
-export function redisGet<T = any>(key: string): T | null {
-  return getStore().get(key) ?? null;
-}
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-export function redisSet<T = any>(key: string, value: T): void {
-  getStore().set(key, value);
-}
+  if (!url || !token) {
+    // We gooien hier GEEN error, want store.ts kan fallback doen.
+    // Alleen als iemand direct getRedis() gebruikt zonder env, dan faalt het.
+    throw new Error("Missing UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN");
+  }
 
-export function redisDel(key: string): void {
-  getStore().delete(key);
+  _redis = new Redis({ url, token });
+  return _redis;
 }
