@@ -1,8 +1,9 @@
+// app/bull/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 
-type Row = {
+type CoinRow = {
   id: string;
   sym: string;
   name: string;
@@ -25,8 +26,11 @@ type Row = {
   windowN: number;
   consistency: number;
   performance: number;
+  volAccel: number;
 
   stage: string;
+  stageSince: number;
+  lastSeen: number;
 };
 
 type Snapshot = {
@@ -34,165 +38,185 @@ type Snapshot = {
   mode: "BULL" | "BEAR";
   btc24: number;
   updatedAt: number;
-
-  radar: Row[];
-  buildup: Row[];
-  almost: Row[];
-  entry: Row[];
-  holdSell: Row[];
-
-  note?: string;
+  radar: CoinRow[];
+  buildup: CoinRow[];
+  almost: CoinRow[];
+  entry: CoinRow[];
+  holdSell: CoinRow[];
 };
 
+function fmtMoney(n: number) {
+  if (!Number.isFinite(n)) return "-";
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
+}
+
+function fmtPct(n: number) {
+  if (!Number.isFinite(n)) return "-";
+  return `${n.toFixed(2)}%`;
+}
+
+function fmtRatio(n: number | null) {
+  if (n == null || !Number.isFinite(n)) return "-";
+  return n.toFixed(2);
+}
+
+function dateNice(ms: number) {
+  if (!ms || !Number.isFinite(ms) || ms < 1000) return "Nog geen scan uitgevoerd";
+  return new Date(ms).toLocaleString();
+}
+
+function TableBlock({ title, rows }: { title: string; rows: CoinRow[] }) {
+  return (
+    <div style={{ marginTop: 18, padding: 14, borderRadius: 14, border: "1px solid rgba(255,255,255,.12)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+        <h2 style={{ margin: 0, fontSize: 18 }}>{title}</h2>
+        <div style={{ opacity: 0.8, fontSize: 12 }}>{rows.length} coins</div>
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ opacity: 0.75, padding: 12, borderRadius: 10, border: "1px dashed rgba(255,255,255,.18)" }}>
+          Nog leeg (wacht op scans / filters streng)
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ opacity: 0.9, textAlign: "left" }}>
+                <th style={{ padding: "10px 8px" }}>Coin</th>
+                <th style={{ padding: "10px 8px" }}>Score</th>
+                <th style={{ padding: "10px 8px" }}>Timing</th>
+                <th style={{ padding: "10px 8px" }}>Setup</th>
+                <th style={{ padding: "10px 8px" }}>24h</th>
+                <th style={{ padding: "10px 8px" }}>14d</th>
+                <th style={{ padding: "10px 8px" }}>MCap</th>
+                <th style={{ padding: "10px 8px" }}>Vol</th>
+                <th style={{ padding: "10px 8px" }}>VM</th>
+                <th style={{ padding: "10px 8px" }}>OB(BG)</th>
+                <th style={{ padding: "10px 8px" }}>OB(BN)</th>
+                <th style={{ padding: "10px 8px" }}>Win</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 40).map((r) => (
+                <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,.08)" }}>
+                  <td style={{ padding: "10px 8px" }}>
+                    <div style={{ fontWeight: 700 }}>{r.sym}</div>
+                    <div style={{ opacity: 0.75, fontSize: 12 }}>{r.name}</div>
+                  </td>
+                  <td style={{ padding: "10px 8px" }}>{r.score100}</td>
+                  <td style={{ padding: "10px 8px" }}>{r.timing}/4</td>
+                  <td style={{ padding: "10px 8px" }}>{r.setup}</td>
+                  <td style={{ padding: "10px 8px" }}>{fmtPct(r.ch24)}</td>
+                  <td style={{ padding: "10px 8px" }}>{fmtPct(r.ch14)}</td>
+                  <td style={{ padding: "10px 8px" }}>{fmtMoney(r.mcap)}</td>
+                  <td style={{ padding: "10px 8px" }}>{fmtMoney(r.vol)}</td>
+                  <td style={{ padding: "10px 8px" }}>{r.vm.toFixed(3)}</td>
+                  <td style={{ padding: "10px 8px" }}>{fmtRatio(r.obBitgetRatio)}</td>
+                  <td style={{ padding: "10px 8px" }}>{fmtRatio(r.obBinanceRatio)}</td>
+                  <td style={{ padding: "10px 8px" }}>{r.windowN}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {rows.length > 40 && <div style={{ opacity: 0.7, marginTop: 8 }}>Toont 40 / {rows.length}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BullPage() {
-  const [data, setData] = useState<Snapshot | null>(null);
+  const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   async function load() {
+    setLoading(true);
+    setErr(null);
     try {
-      setErr(null);
       const r = await fetch("/api/snapshot?side=bull", { cache: "no-store" });
-      if (!r.ok) throw new Error("API error: " + r.status);
-      setData(await r.json());
+      if (!r.ok) throw new Error(`snapshot failed: ${r.status}`);
+      const j = (await r.json()) as Snapshot;
+      setSnap(j);
     } catch (e: any) {
-      setErr(e?.message || "Unknown error");
+      setErr(String(e?.message || e));
+    } finally {
+      setLoading(false);
     }
+  }
+
+  async function forceScan() {
+    try {
+      await fetch("/api/scan", { cache: "no-store" });
+    } catch {}
+    await load();
   }
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 15_000);
+    const t = setInterval(load, 30_000);
     return () => clearInterval(t);
   }, []);
 
-  const btc = data?.btc24 ?? 0;
-  const btcBadge = data ? `BTC ${btc >= 0 ? "+" : ""}${btc.toFixed(2)}%` : "laden…";
-  const badgeClass = !data ? "badge" : btc >= 0 ? "badge good" : "badge bad";
-
   return (
-    <div className="container">
-      <div className="topbar">
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <div style={{ fontWeight: 800 }}>CryptoCroc — BULL</div>
-          <div className={badgeClass}>{btcBadge}</div>
-          <div className="badge">{data?.updatedAt ? new Date(data.updatedAt).toLocaleString("nl-NL") : "…"}</div>
-        </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <a className="btn" href="/bear">Naar BEAR</a>
-          <button className="btn" onClick={load}>Refresh</button>
-          <a className="btn" href="/api/scan" target="_blank" rel="noreferrer">Run scan</a>
-        </div>
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 20 }}>
+      <h1 style={{ margin: 0, fontSize: 34 }}>🐊 CryptoCroc — BULL</h1>
+
+      <div style={{ marginTop: 10, opacity: 0.85 }}>
+        BTC 24h: <b>{snap ? fmtPct(snap.btc24) : "-"}</b> — Mode: <b>{snap ? snap.mode : "-"}</b>
       </div>
 
+      <div style={{ marginTop: 8, opacity: 0.8 }}>
+        Last scan: <b>{snap ? dateNice(snap.updatedAt) : "..."}</b>
+      </div>
+
+      <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+        <button
+          onClick={forceScan}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.18)",
+            background: "rgba(0,0,0,.25)",
+            color: "white"
+          }}
+        >
+          Force scan
+        </button>
+
+        <button
+          onClick={load}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,.18)",
+            background: "rgba(0,0,0,.12)",
+            color: "white"
+          }}
+        >
+          Refresh
+        </button>
+      </div>
+
+      {loading && <div style={{ marginTop: 16, opacity: 0.8 }}>Laden…</div>}
       {err && (
-        <div className="card" style={{ marginTop: 14 }}>
-          <h2>Error</h2>
-          <div style={{ padding: 14 }} className="small">{err}</div>
+        <div style={{ marginTop: 16, color: "#ffd1d1" }}>
+          Error: {err}
+          <div style={{ opacity: 0.8, marginTop: 6 }}>
+            Check ook: <code>/api/scan</code> en <code>/api/snapshot?side=bull</code>
+          </div>
         </div>
       )}
 
-      {data?.note && (
-        <div className="card" style={{ marginTop: 14 }}>
-          <h2>Note</h2>
-          <div style={{ padding: 14 }} className="small">{data.note}</div>
-        </div>
-      )}
-
-      <div className="grid">
-        <TableCard title="RADAR" rows={data?.radar || []} />
-        <TableCard title="BUILDUP" rows={data?.buildup || []} />
-        <TableCard title="ALMOST READY" rows={data?.almost || []} />
-        <TableCard title="ENTRY" rows={data?.entry || []} />
-        <TableCard title="HOLD / SELL" rows={data?.holdSell || []} />
-      </div>
-    </div>
+      {/* Altijd 5 tabellen renderen */}
+      <TableBlock title="RADAR" rows={snap?.radar || []} />
+      <TableBlock title="BUILDUP" rows={snap?.buildup || []} />
+      <TableBlock title="ALMOST READY" rows={snap?.almost || []} />
+      <TableBlock title="ENTRY" rows={snap?.entry || []} />
+      <TableBlock title="HOLD / SELL" rows={snap?.holdSell || []} />
+    </main>
   );
-}
-
-function TableCard({ title, rows }: { title: string; rows: Row[] }) {
-  return (
-    <div className="card">
-      <h2>
-        <span>{title}</span>
-        <span className="small">{rows.length} coins</span>
-      </h2>
-      <div className="tablewrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Coin</th>
-              <th>Price</th>
-              <th>MCap</th>
-              <th>Vol</th>
-              <th>VM</th>
-              <th>24h</th>
-              <th>14d</th>
-              <th>Score</th>
-              <th>Timing</th>
-              <th>Setup</th>
-              <th>OB Bitget</th>
-              <th>OB Binance</th>
-              <th>Confirm</th>
-              <th>WindowN</th>
-              <th>Cons</th>
-              <th>Perf</th>
-              <th>Stage</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
-                <td>
-                  <div style={{ fontWeight: 800 }}>{r.sym}</div>
-                  <div className="small">{r.name}</div>
-                </td>
-                <td>${fmt(r.price)}</td>
-                <td>${fmtBig(r.mcap)}</td>
-                <td>${fmtBig(r.vol)}</td>
-                <td>{(r.vm ?? 0).toFixed(2)}</td>
-                <td>{pct(r.ch24)}</td>
-                <td>{pct(r.ch14)}</td>
-                <td><span className={scorePill(r.score100)}>{r.score100}</span></td>
-                <td>{r.timing}/4</td>
-                <td>{r.setup}</td>
-                <td>{r.obBitgetRatio == null ? "—" : r.obBitgetRatio.toFixed(2) + "x"}</td>
-                <td>{r.obBinanceRatio == null ? "—" : r.obBinanceRatio.toFixed(2) + "x"}</td>
-                <td>{r.obConfirm ? <span className="pill good">YES</span> : <span className="pill">NO</span>}</td>
-                <td>{r.windowN}</td>
-                <td>{Math.round(r.consistency)}%</td>
-                <td>{Math.round(r.performance)}%</td>
-                <td>{r.stage}</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={17} className="small" style={{ padding: 14 }}>Geen coins in deze tabel.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function fmt(n: number) {
-  if (!Number.isFinite(n)) return "0";
-  if (n >= 1) return n.toFixed(4);
-  return n.toPrecision(4);
-}
-function fmtBig(n: number) {
-  if (!Number.isFinite(n)) return "0";
-  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
-  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
-  if (n >= 1e3) return (n / 1e3).toFixed(2) + "K";
-  return n.toFixed(0);
-}
-function pct(n: number) {
-  const v = Number.isFinite(n) ? n : 0;
-  const s = v >= 0 ? "+" : "";
-  return s + v.toFixed(2) + "%";
-}
-function scorePill(score: number) {
-  if (score >= 90) return "pill good";
-  if (score >= 80) return "pill warn";
-  return "pill";
 }
