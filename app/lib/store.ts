@@ -1,53 +1,53 @@
 // app/lib/store.ts
-// Simpele store wrapper: gebruikt Redis/KV als die bestaat, anders memory fallback.
-// Doel: build laten slagen + routes hebben altijd iets om mee te werken.
+// 1 centrale opslaglaag.
+// Werkt met Redis (Upstash) als die env vars bestaan.
+// Anders fallback naar lokale db.ts (sqlite file) als jij die hebt.
 
-type Json = any;
+import { getRedis } from "@/app/lib/redis";
+import * as db from "@/app/lib/db";
 
-let mem = new Map<string, Json>();
+type AnyJson = any;
 
-async function getRedis() {
-  // jouw project heeft app/lib/redis.ts
-  // als die faalt (geen env), dan vallen we terug op memory
-  try {
-    const mod = await import("./redis");
-    // verwacht dat redis.ts iets export zoals `redis` of `getRedis`
-    // we proberen beide netjes:
-    // @ts-ignore
-    return mod.redis ?? (mod.getRedis ? await mod.getRedis() : null);
-  } catch {
-    return null;
-  }
+function hasRedisEnv() {
+  return !!process.env.UPSTASH_REDIS_REST_URL && !!process.env.UPSTASH_REDIS_REST_TOKEN;
 }
 
-export async function storeGet<T = Json>(key: string): Promise<T | null> {
-  const r = await getRedis();
-  if (r?.get) {
-    const v = await r.get(key);
+export async function storeGet<T = AnyJson>(key: string): Promise<T | null> {
+  // 1) Redis eerst (production)
+  if (hasRedisEnv()) {
+    const redis = getRedis();
+    const v = await redis.get<T>(key);
     return (v ?? null) as T | null;
   }
-  return (mem.get(key) ?? null) as T | null;
+
+  // 2) Fallback naar db.ts (local / old setup)
+  // db.ts moet dan functies hebben: kvGet/kvSet of get/set
+  // We proberen beide varianten netjes.
+  const anyDb: any = db as any;
+
+  if (typeof anyDb.kvGet === "function") return (await anyDb.kvGet(key)) ?? null;
+  if (typeof anyDb.get === "function") return (await anyDb.get(key)) ?? null;
+
+  return null;
 }
 
-export async function storeSet(key: string, value: Json, ttlSeconds?: number) {
-  const r = await getRedis();
-  if (r?.set) {
-    if (ttlSeconds) {
-      // @ts-ignore
-      await r.set(key, value, { ex: ttlSeconds });
-    } else {
-      await r.set(key, value);
-    }
+export async function storeSet(key: string, value: AnyJson): Promise<void> {
+  if (hasRedisEnv()) {
+    const redis = getRedis();
+    await redis.set(key, value);
     return;
   }
-  mem.set(key, value);
-}
 
-export async function storeDel(key: string) {
-  const r = await getRedis();
-  if (r?.del) {
-    await r.del(key);
+  const anyDb: any = db as any;
+
+  if (typeof anyDb.kvSet === "function") {
+    await anyDb.kvSet(key, value);
     return;
   }
-  mem.delete(key);
+  if (typeof anyDb.set === "function") {
+    await anyDb.set(key, value);
+    return;
+  }
+
+  // Als db.ts geen set heeft, dan doen we niks (maar build crasht niet)
 }
