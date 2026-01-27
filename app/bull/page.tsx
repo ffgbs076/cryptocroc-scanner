@@ -1,114 +1,148 @@
+// app/bull/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 
-type TopItem = {
-  rank: number;
-  symbol: string;
-  price: number;
-  vol24hUsd: number;
-  mcUsd: number | null;
-  vmRatio: number | null;
-  pct14d: number;
-  score: number;
+type CoinRow = {
+  id: string; sym: string; name: string;
+  score: number; timing: number; cons: number; perf: number;
+  mcap: number; vol: number; ch24: number; volRatio: number;
+  level: number; runnerHits: number;
 };
 
-type ScanResp = {
-  ok: true;
-  side: "bull" | "bear";
-  scannedAt: number;
-  top10: TopItem[];
+type Tables = {
+  radar: CoinRow[];
+  buildup: CoinRow[];
+  almost: CoinRow[];
+  entry: CoinRow[];
+  runner: CoinRow[];
 };
-
-function fmt(n: number) {
-  if (!Number.isFinite(n)) return "-";
-  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
-}
 
 export default function BullPage() {
-  const [data, setData] = useState<ScanResp | null>(null);
-  const [err, setErr] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [tables, setTables] = useState<Tables | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
-  async function load() {
-    setErr("");
+  async function fetchJson(url: string) {
+    const r = await fetch(url, { cache: "no-store" });
+    const ct = r.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) {
+      const txt = await r.text();
+      throw new Error(`API gaf geen JSON terug. Eerste stuk: ${txt.slice(0, 80)}`);
+    }
+    return await r.json();
+  }
+
+  async function load(force = false) {
+    setLoading(true);
+    setErr(null);
+
     try {
-      const r = await fetch("/api/scan?side=bull", { cache: "no-store" });
-      const j = (await r.json()) as any;
-      if (!j?.ok) throw new Error(j?.error || "unknown");
-      setData(j as ScanResp);
+      if (!force) {
+        const snap = await fetchJson("/api/snapshot?side=bull");
+        const snapData = snap?.data || null;
+
+        if (!snapData?.tables) {
+          return await load(true);
+        }
+
+        setTables(snapData.tables);
+        return;
+      }
+
+      const scan = await fetchJson("/api/scan?side=bull&force=1");
+      const scanData = scan?.data || null;
+
+      if (!scanData?.tables) {
+        setTables({ radar: [], buildup: [], almost: [], entry: [], runner: [] });
+        return;
+      }
+
+      setTables(scanData.tables);
     } catch (e: any) {
       setErr(String(e?.message || e));
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => {
-    load();
-    const id = setInterval(load, 60_000);
-    return () => clearInterval(id);
+    load(false);
   }, []);
 
-  const items = data?.top10 || [];
+  function Table({ title, rows }: { title: string; rows: CoinRow[] }) {
+    return (
+      <div style={{ marginBottom: 18, padding: 14, border: "1px solid rgba(255,255,255,.12)", borderRadius: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={{ margin: 0 }}>{title}</h2>
+          <div style={{ opacity: 0.7, fontSize: 12 }}>{rows.length} coins</div>
+        </div>
+
+        <div style={{ overflowX: "auto", marginTop: 10 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ textAlign: "left", opacity: 0.8 }}>
+                <th style={{ padding: "8px 6px" }}>Coin</th>
+                <th style={{ padding: "8px 6px" }}>Score</th>
+                <th style={{ padding: "8px 6px" }}>Timing</th>
+                <th style={{ padding: "8px 6px" }}>Cons</th>
+                <th style={{ padding: "8px 6px" }}>Perf</th>
+                <th style={{ padding: "8px 6px" }}>24h%</th>
+                <th style={{ padding: "8px 6px" }}>Vol/Mcap</th>
+                <th style={{ padding: "8px 6px" }}>RunnerHits</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 25).map((r) => (
+                <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,.08)" }}>
+                  <td style={{ padding: "8px 6px" }}>
+                    <b>{r.sym}</b> <span style={{ opacity: 0.7 }}>{r.name}</span>
+                  </td>
+                  <td style={{ padding: "8px 6px" }}>{r.score}</td>
+                  <td style={{ padding: "8px 6px" }}>{r.timing}/4</td>
+                  <td style={{ padding: "8px 6px" }}>{r.cons}%</td>
+                  <td style={{ padding: "8px 6px" }}>{r.perf}%</td>
+                  <td style={{ padding: "8px 6px" }}>{Number(r.ch24).toFixed(2)}</td>
+                  <td style={{ padding: "8px 6px" }}>{Number(r.volRatio).toFixed(3)}</td>
+                  <td style={{ padding: "8px 6px" }}>{r.runnerHits}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td style={{ padding: "10px 6px", opacity: 0.7 }} colSpan={8}>
+                    Geen coins (nog). Laat de pinger 2-3 keer lopen.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 24, color: "white" }}>
-      <h1 style={{ fontSize: 26, marginBottom: 10 }}>🐊 CryptoCroc — BULL Top10 (14D)</h1>
-
-      <div style={{ opacity: 0.8, marginBottom: 12 }}>
-        {err ? `Error: ${err}` : data ? `Last scan: ${new Date(data.scannedAt).toLocaleString()}` : "Loading..."}
+    <div style={{ padding: 18, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
+        <h1 style={{ margin: 0 }}>CryptoCroc — BULL</h1>
+        <button onClick={() => load(true)} disabled={loading} style={{ padding: "8px 10px" }}>
+          Force scan
+        </button>
+        <a href="/bear" style={{ opacity: 0.8 }}>BEAR →</a>
       </div>
 
-      <button
-        onClick={() => fetch("/api/scan?side=bull&scan=1", { cache: "no-store" }).then(load)}
-        style={{
-          padding: "10px 14px",
-          borderRadius: 10,
-          border: "1px solid rgba(255,255,255,.2)",
-          background: "rgba(0,0,0,.25)",
-          color: "white",
-          cursor: "pointer",
-          marginBottom: 14,
-        }}
-      >
-        Force scan
-      </button>
+      {err && <div style={{ marginBottom: 12, color: "salmon" }}>{err}</div>}
+      {loading && <div style={{ opacity: 0.7 }}>Laden…</div>}
 
-      <div style={{ overflowX: "auto", border: "1px solid rgba(255,255,255,.12)", borderRadius: 14 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-          <thead>
-            <tr style={{ textAlign: "left", background: "rgba(255,255,255,.06)" }}>
-              <th style={{ padding: 10 }}>#</th>
-              <th style={{ padding: 10 }}>Symbol</th>
-              <th style={{ padding: 10 }}>14D%</th>
-              <th style={{ padding: 10 }}>Price</th>
-              <th style={{ padding: 10 }}>24h Vol (USD)</th>
-              <th style={{ padding: 10 }}>MarketCap</th>
-              <th style={{ padding: 10 }}>VM Ratio</th>
-              <th style={{ padding: 10 }}>Score</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((it) => (
-              <tr key={it.symbol} style={{ borderTop: "1px solid rgba(255,255,255,.10)" }}>
-                <td style={{ padding: 10 }}>{it.rank}</td>
-                <td style={{ padding: 10, fontWeight: 700 }}>{it.symbol}</td>
-                <td style={{ padding: 10 }}>{fmt(it.pct14d)}%</td>
-                <td style={{ padding: 10 }}>${fmt(it.price)}</td>
-                <td style={{ padding: 10 }}>${fmt(it.vol24hUsd)}</td>
-                <td style={{ padding: 10 }}>{it.mcUsd ? `$${fmt(it.mcUsd)}` : "-"}</td>
-                <td style={{ padding: 10 }}>{it.vmRatio ?? "-"}</td>
-                <td style={{ padding: 10 }}>{fmt(it.score)}</td>
-              </tr>
-            ))}
-            {!items.length ? (
-              <tr>
-                <td colSpan={8} style={{ padding: 14, opacity: 0.8 }}>
-                  Nog geen top10 (filters zijn streng of data ontbreekt). Klik “Force scan”.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-    </main>
+      {!loading && tables && (
+        <>
+          <Table title="RADAR (Level 5)" rows={tables.radar} />
+          <Table title="BUILDUP (Level 4)" rows={tables.buildup} />
+          <Table title="ALMOST (Level 3)" rows={tables.almost} />
+          <Table title="ENTRY (Level 2+1)" rows={tables.entry} />
+          <Table title="RUNNER (los van trechter)" rows={tables.runner} />
+        </>
+      )}
+    </div>
   );
 }
