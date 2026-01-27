@@ -15,7 +15,7 @@ type Row = {
   vm: number;
 
   score100: number;
-  timing: number; // 0..4
+  timing: number;
   setup: string;
 
   obBitgetRatio: number | null;
@@ -26,32 +26,34 @@ type Row = {
   consistency: number;
   performance: number;
 
-  stage: "RADAR" | "BUILDUP" | "ALMOST" | "ENTRY" | "HOLD" | "SELL";
+  stage: string;
 };
 
-type Tables = {
+type Snapshot = {
+  side: "bull" | "bear";
   mode: "BULL" | "BEAR";
   btc24: number;
   updatedAt: number;
+
   radar: Row[];
   buildup: Row[];
   almost: Row[];
   entry: Row[];
   holdSell: Row[];
+
   note?: string;
 };
 
 export default function BullPage() {
-  const [data, setData] = useState<Tables | null>(null);
+  const [data, setData] = useState<Snapshot | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   async function load() {
     try {
       setErr(null);
-      const r = await fetch("/api/tables?side=bull", { cache: "no-store" });
+      const r = await fetch("/api/snapshot?side=bull", { cache: "no-store" });
       if (!r.ok) throw new Error("API error: " + r.status);
-      const j = (await r.json()) as Tables;
-      setData(j);
+      setData(await r.json());
     } catch (e: any) {
       setErr(e?.message || "Unknown error");
     }
@@ -63,11 +65,9 @@ export default function BullPage() {
     return () => clearInterval(t);
   }, []);
 
-  const btcBadge =
-    data?.btc24 == null ? "…" : data.btc24 >= 0 ? `BTC +${data.btc24.toFixed(2)}%` : `BTC ${data.btc24.toFixed(2)}%`;
-
-  const badgeClass =
-    data?.btc24 == null ? "badge" : data.btc24 >= 0 ? "badge good" : "badge bad";
+  const btc = data?.btc24 ?? 0;
+  const btcBadge = data ? `BTC ${btc >= 0 ? "+" : ""}${btc.toFixed(2)}%` : "laden…";
+  const badgeClass = !data ? "badge" : btc >= 0 ? "badge good" : "badge bad";
 
   return (
     <div className="container">
@@ -75,13 +75,12 @@ export default function BullPage() {
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <div style={{ fontWeight: 800 }}>CryptoCroc — BULL</div>
           <div className={badgeClass}>{btcBadge}</div>
-          <div className="badge">
-            {data?.updatedAt ? new Date(data.updatedAt).toLocaleString("nl-NL") : "laden…"}
-          </div>
+          <div className="badge">{data?.updatedAt ? new Date(data.updatedAt).toLocaleString("nl-NL") : "…"}</div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <a className="pill" href="/bear">Ga naar BEAR</a>
-          <button className="pill" onClick={load}>Refresh</button>
+          <a className="btn" href="/bear">Naar BEAR</a>
+          <button className="btn" onClick={load}>Refresh</button>
+          <a className="btn" href="/api/scan" target="_blank" rel="noreferrer">Run scan</a>
         </div>
       </div>
 
@@ -110,7 +109,7 @@ export default function BullPage() {
   );
 }
 
-function TableCard({ title, rows }: { title: string; rows: any[] }) {
+function TableCard({ title, rows }: { title: string; rows: Row[] }) {
   return (
     <div className="card">
       <h2>
@@ -150,8 +149,8 @@ function TableCard({ title, rows }: { title: string; rows: any[] }) {
                 <td>${fmt(r.price)}</td>
                 <td>${fmtBig(r.mcap)}</td>
                 <td>${fmtBig(r.vol)}</td>
-                <td>{r.vm.toFixed(2)}</td>
-                <td className={r.ch24 >= 0 ? "" : ""}>{pct(r.ch24)}</td>
+                <td>{(r.vm ?? 0).toFixed(2)}</td>
+                <td>{pct(r.ch24)}</td>
                 <td>{pct(r.ch14)}</td>
                 <td><span className={scorePill(r.score100)}>{r.score100}</span></td>
                 <td>{r.timing}/4</td>
@@ -188,8 +187,9 @@ function fmtBig(n: number) {
   return n.toFixed(0);
 }
 function pct(n: number) {
-  const s = n >= 0 ? "+" : "";
-  return s + n.toFixed(2) + "%";
+  const v = Number.isFinite(n) ? n : 0;
+  const s = v >= 0 ? "+" : "";
+  return s + v.toFixed(2) + "%";
 }
 function scorePill(score: number) {
   if (score >= 90) return "pill good";
