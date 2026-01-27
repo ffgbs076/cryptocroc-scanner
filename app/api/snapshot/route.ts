@@ -1,27 +1,19 @@
-// app/api/snapshot/route.ts
-
-import { NextRequest, NextResponse } from "next/server";
-import { storeGet, storeIncr } from "@/app/lib/store";
-import type { Side, ScanResult } from "@/app/lib/scan";
-
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest) {
-  storeIncr("hits:api:snapshot", 1);
-
+export async function GET(req: Request) {
   const url = new URL(req.url);
-  const side = (url.searchParams.get("side") || "bull").toLowerCase() as Side;
+  const side = (url.searchParams.get("side") || "bull") as "bull" | "bear";
 
-  if (side !== "bull" && side !== "bear") {
-    return NextResponse.json({ ok: false, error: "side must be bull or bear" }, { status: 400 });
-  }
-
-  const snap = storeGet<ScanResult>(`snap:${side}`);
-  return NextResponse.json({
-    ok: true,
+  return Response.json({
     side,
-    ts: Date.now(),
-    data: snap || null
+    mode: side === "bull" ? "BULL" : "BEAR",
+    btc24: 0,
+    updatedAt: Date.now(),
+    radar: [],
+    buildup: [],
+    almost: [],
+    entry: [],
+    holdSell: [],
+    note: "Snapshot stub. Straks komt dit uit KV state."
   });
 }
