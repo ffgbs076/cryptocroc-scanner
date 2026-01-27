@@ -1,21 +1,21 @@
 // app/api/hits/route.ts
+
 import { NextResponse } from "next/server";
-import { redisGet, redisSet } from "@/app/lib/redis";
+import { storeGet, storeIncr } from "@/app/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const KEY = "cc:hits";
-
 export async function GET() {
-  const current = redisGet(KEY) ?? 0;
-
-  const next = Number(current) + 1;
-  redisSet(KEY, next);
+  storeIncr("hits:api:hits", 1);
 
   return NextResponse.json({
     ok: true,
-    hits: next,
     ts: Date.now(),
+    hits: {
+      scan: storeGet<number>("hits:api:scan") ?? 0,
+      snapshot: storeGet<number>("hits:api:snapshot") ?? 0,
+      hits: storeGet<number>("hits:api:hits") ?? 0
+    }
   });
 }
