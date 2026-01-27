@@ -2,61 +2,173 @@
 
 import { useEffect, useState } from "react";
 
-type Row = any;
-type Snapshot = any;
+type CoinRow = { [key: string]: any; id?: string; sym?: string; name?: string };
+type ApiTables = { entry?: CoinRow[]; almost?: CoinRow[]; buildup?: CoinRow[]; radar?: CoinRow[]; runner?: CoinRow[] };
+type ApiStats = { [key: string]: any; totalScanned?: number; entry?: number; almost?: number; buildup?: number; radar?: number; runner?: number };
+type ApiResponse = { ok?: boolean; side?: string; ts?: number; data?: { ts?: number; tables?: ApiTables; stats?: ApiStats } | null; tables?: ApiTables; stats?: ApiStats };
 
-export default function BearPage() {
-  const [data, setData] = useState<Snapshot | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+const API_ENDPOINT = "/api/top10_bear";
 
-  async function load() {
-    try {
-      setErr(null);
-      const r = await fetch("/api/snapshot?side=bear", { cache: "no-store" });
-      if (!r.ok) throw new Error("API error: " + r.status);
-      setData(await r.json());
-    } catch (e: any) {
-      setErr(e?.message || "Unknown error");
-    }
+function safeNum(n: any) { return typeof n === "number" && Number.isFinite(n) ? n : null; }
+function safeDate(ts: any) {
+  const v = safeNum(ts);
+  if (v === null) return "Nog niet gescand";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "Nog niet gescand";
+  return d.toLocaleString();
+}
+function normalizeTables(json: ApiResponse) {
+  const t = json?.data?.tables ?? json?.tables ?? {};
+  return {
+    entry: Array.isArray(t.entry) ? t.entry : [],
+    almost: Array.isArray(t.almost) ? t.almost : [],
+    buildup: Array.isArray(t.buildup) ? t.buildup : [],
+    radar: Array.isArray(t.radar) ? t.radar : [],
+    runner: Array.isArray(t.runner) ? t.runner : [],
+  };
+}
+function normalizeStats(json: ApiResponse) {
+  return json?.data?.stats ?? json?.stats ?? {};
+}
+async function fetchJson(url: string) {
+  const r = await fetch(url, { cache: "no-store" });
+  const ct = r.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const txt = await r.text();
+    throw new Error(`API gaf geen JSON terug. Eerste stuk:\n${txt.slice(0, 250)}`);
   }
+  if (!r.ok) throw new Error(`API error ${r.status}`);
+  return (await r.json()) as ApiResponse;
+}
 
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 15_000);
-    return () => clearInterval(t);
-  }, []);
-
-  const btc = data?.btc24 ?? 0;
-  const btcBadge = data ? `BTC ${btc >= 0 ? "+" : ""}${btc.toFixed(2)}%` : "laden…";
-  const badgeClass = !data ? "badge" : btc >= 0 ? "badge good" : "badge bad";
-
+function TableBlock({ title, rows }: { title: string; rows: CoinRow[] }) {
   return (
-    <div className="container">
-      <div className="topbar">
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <div style={{ fontWeight: 800 }}>CryptoCroc — BEAR</div>
-          <div className={badgeClass}>{btcBadge}</div>
-          <div className="badge">{data?.updatedAt ? new Date(data.updatedAt).toLocaleString("nl-NL") : "…"}</div>
-        </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <a className="btn" href="/bull">Naar BULL</a>
-          <button className="btn" onClick={load}>Refresh</button>
-          <a className="btn" href="/api/scan" target="_blank" rel="noreferrer">Run scan</a>
-        </div>
+    <div style={styles.block}>
+      <div style={styles.blockHeader}>
+        <div style={styles.blockTitle}>{title}</div>
+        <div style={styles.badge}>{rows.length}</div>
       </div>
-
-      {err && (
-        <div className="card" style={{ marginTop: 14 }}>
-          <h2>Error</h2>
-          <div style={{ padding: 14 }} className="small">{err}</div>
-        </div>
-      )}
-
-      <div className="grid">
-        <pre className="card" style={{ padding: 14, overflow: "auto" }}>
-          {data ? JSON.stringify(data, null, 2) : "laden…"}
-        </pre>
+      <div style={styles.tableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>#</th>
+              <th style={styles.th}>Symbol</th>
+              <th style={styles.th}>Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td style={styles.td} colSpan={3}>Nog geen coins in deze tabel</td></tr>
+            ) : (
+              rows.map((c, i) => (
+                <tr key={(c.id || c.sym || c.name || "row") + "-" + i}>
+                  <td style={styles.td}>{i + 1}</td>
+                  <td style={styles.td}>{(c.sym || "-").toUpperCase()}</td>
+                  <td style={styles.td}>{c.name || "-"}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
+
+export default function BearPage() {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [raw, setRaw] = useState<ApiResponse | null>(null);
+
+  const tables = raw ? normalizeTables(raw) : null;
+  const stats = raw ? normalizeStats(raw) : null;
+  const lastScan = raw?.ts ?? raw?.data?.ts;
+
+  async function load(force = false) {
+    setErr(null);
+    setLoading(true);
+    try {
+      const url = force ? `${API_ENDPOINT}?force=1` : API_ENDPOINT;
+      const j = await fetchJson(url);
+      setRaw(j);
+    } catch (e: any) {
+      setErr(e?.message || "Onbekende fout");
+      setRaw(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(false); }, []);
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.header}>
+        <div style={styles.h1}>🐊 CryptoCroc — BEAR</div>
+        <div style={styles.sub}>Last scan: {safeDate(lastScan)}</div>
+
+        <div style={styles.actions}>
+          <button style={styles.btn} onClick={() => load(true)} disabled={loading}>
+            Force scan
+          </button>
+          <a style={styles.link} href="/bull">Naar BULL →</a>
+        </div>
+
+        {stats && (
+          <div style={styles.statsRow}>
+            <div style={styles.statChip}>Total: {stats.totalScanned ?? 0}</div>
+            <div style={styles.statChip}>Entry: {stats.entry ?? 0}</div>
+            <div style={styles.statChip}>Almost: {stats.almost ?? 0}</div>
+            <div style={styles.statChip}>Buildup: {stats.buildup ?? 0}</div>
+            <div style={styles.statChip}>Radar: {stats.radar ?? 0}</div>
+            <div style={styles.statChip}>Runner: {stats.runner ?? 0}</div>
+          </div>
+        )}
+      </div>
+
+      {err && <div style={styles.error}>❌ {err}</div>}
+
+      {!tables ? (
+        <div style={styles.block}>
+          {loading ? "Laden..." : "Geen data (nog niet gescand of fout)."}
+        </div>
+      ) : (
+        <>
+          <TableBlock title="1) ENTRY READY" rows={tables.entry} />
+          <TableBlock title="2) ALMOST READY" rows={tables.almost} />
+          <TableBlock title="3) BUILDUP" rows={tables.buildup} />
+          <TableBlock title="4) RADAR" rows={tables.radar} />
+          <TableBlock title="5) RUNNER ALERT" rows={tables.runner} />
+        </>
+      )}
+    </div>
+  );
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    padding: 18,
+    background: "radial-gradient(1200px 800px at 20% 10%, #2b0b0b 0%, #1f0606 45%, #150404 100%)",
+    color: "rgba(255,255,255,.92)",
+    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+  },
+  header: { maxWidth: 980, margin: "0 auto 14px auto" },
+  h1: { fontSize: 34, fontWeight: 800, marginBottom: 6 },
+  sub: { opacity: 0.75, marginBottom: 12 },
+  actions: { display: "flex", gap: 12, alignItems: "center", marginBottom: 12 },
+  btn: { border: "1px solid rgba(255,255,255,.18)", background: "rgba(0,0,0,.25)", color: "white", padding: "10px 14px", borderRadius: 12, cursor: "pointer" },
+  link: { color: "rgba(255,255,255,.9)", textDecoration: "none", opacity: 0.9 },
+  statsRow: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 },
+  statChip: { border: "1px solid rgba(255,255,255,.14)", background: "rgba(0,0,0,.22)", padding: "6px 10px", borderRadius: 999, fontSize: 13 },
+  error: { maxWidth: 980, margin: "0 auto 12px auto", padding: 12, borderRadius: 12, background: "rgba(255,0,0,.12)", border: "1px solid rgba(255,0,0,.25)" },
+  block: { maxWidth: 980, margin: "0 auto 14px auto", borderRadius: 16, border: "1px solid rgba(255,255,255,.14)", background: "rgba(0,0,0,.22)", padding: 12, overflow: "hidden" },
+  blockHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  blockTitle: { fontSize: 15, fontWeight: 800, opacity: 0.95 },
+  badge: { fontSize: 12, padding: "4px 10px", borderRadius: 999, border: "1px solid rgba(255,255,255,.16)", background: "rgba(0,0,0,.22)" },
+  tableWrap: { width: "100%", overflowX: "auto" },
+  table: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
+  th: { textAlign: "left", padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.12)", opacity: 0.85, whiteSpace: "nowrap" },
+  td: { padding: "10px 8px", borderBottom: "1px solid rgba(255,255,255,.08)", whiteSpace: "nowrap", opacity: 0.95 },
+};
