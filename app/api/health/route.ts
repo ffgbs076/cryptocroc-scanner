@@ -1,5 +1,10 @@
+import { NextResponse } from "next/server";
+
 export const runtime = "nodejs";
 
 export async function GET() {
-  return Response.json({ ok: true, ts: Date.now() });
+  return NextResponse.json({
+    ok: true,
+    ts: Date.now(),
+  });
 }
