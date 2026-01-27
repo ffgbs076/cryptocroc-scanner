@@ -1,14 +1,14 @@
-import "./globals.css"
+import "./globals.css";
 
 export const metadata = {
   title: "CryptoCroc Scanner",
-  description: "CryptoCroc — Top kansen (14D) + 10 filters + TP"
-}
+  description: "Bull/Bear smallcap scanner"
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="nl">
       <body>{children}</body>
     </html>
-  )
+  );
 }
