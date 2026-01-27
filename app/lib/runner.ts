@@ -1,8 +1,9 @@
-import cron from "node-cron"
-import fetch from "node-fetch"
+// app/lib/runner.ts
+// In Vercel/Next draaien geen "node-cron" jobs in je build.
+// Scans doe je via API routes (zoals /api/scan) of Vercel Cron (vercel.json).
+// Dit bestand bestaat alleen zodat imports niet breken.
 
-cron.schedule("*/30 * * * *", async () => {
-  await fetch("http://localhost:3000/api/scan?side=bull")
-  await fetch("http://localhost:3000/api/scan?side=bear")
-  console.log("✅ Scan opgeslagen", new Date().toISOString())
-})
+export function startRunner() {
+  // bewust leeg
+  return;
+}
