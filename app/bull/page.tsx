@@ -1,222 +1,380 @@
-// app/bull/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
 
 type CoinRow = {
-  id: string;
-  sym: string;
-  name: string;
+  id?: string;
+  sym?: string;
+  name?: string;
 
-  price: number;
-  mcap: number;
-  vol: number;
-  ch24: number;
-  ch14: number;
-  vm: number;
+  // jouw scanner velden (maakt niet uit als sommige ontbreken)
+  score?: number;
+  timing?: number;
+  cons?: number;
+  perf?: number;
 
-  score100: number;
-  timing: number;
-  setup: string;
+  mcap?: number;
+  vol?: number;
+  ch24?: number;
+  volRatio?: number;
 
-  obBitgetRatio: number | null;
-  obBinanceRatio: number | null;
-  obConfirm: boolean;
+  level?: number;
+  runnerHits?: number;
 
-  windowN: number;
-  consistency: number;
-  performance: number;
-  volAccel: number;
-
-  stage: string;
-  stageSince: number;
-  lastSeen: number;
+  // eventuele andere velden die jouw API terugstuurt
+  [key: string]: any;
 };
 
-type Snapshot = {
-  side: "bull" | "bear";
-  mode: "BULL" | "BEAR";
-  btc24: number;
-  updatedAt: number;
-  radar: CoinRow[];
-  buildup: CoinRow[];
-  almost: CoinRow[];
-  entry: CoinRow[];
-  holdSell: CoinRow[];
+type ApiTables = {
+  entry?: CoinRow[];
+  almost?: CoinRow[];
+  buildup?: CoinRow[];
+  radar?: CoinRow[];
+  runner?: CoinRow[];
 };
 
-function fmtMoney(n: number) {
-  if (!Number.isFinite(n)) return "-";
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
-  return `$${n.toFixed(0)}`;
+type ApiStats = {
+  totalScanned?: number;
+  entry?: number;
+  almost?: number;
+  buildup?: number;
+  radar?: number;
+  runner?: number;
+  [key: string]: any;
+};
+
+type ApiResponse = {
+  ok?: boolean;
+  side?: string;
+  ts?: number;
+  data?: {
+    ts?: number;
+    tables?: ApiTables;
+    stats?: ApiStats;
+  } | null;
+
+  // sommige versies sturen direct tables/stats op root
+  tables?: ApiTables;
+  stats?: ApiStats;
+};
+
+const API_ENDPOINT = "/api/top10";
+
+function safeNum(n: any) {
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
 
-function fmtPct(n: number) {
-  if (!Number.isFinite(n)) return "-";
-  return `${n.toFixed(2)}%`;
+function fmtMoney(n: any) {
+  const v = safeNum(n);
+  if (v === null) return "-";
+  if (v >= 1e9) return (v / 1e9).toFixed(2) + "B";
+  if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
+  if (v >= 1e3) return (v / 1e3).toFixed(2) + "K";
+  return v.toFixed(0);
 }
 
-function fmtRatio(n: number | null) {
-  if (n == null || !Number.isFinite(n)) return "-";
-  return n.toFixed(2);
+function fmtPct(n: any) {
+  const v = safeNum(n);
+  if (v === null) return "-";
+  return v.toFixed(2) + "%";
 }
 
-function dateNice(ms: number) {
-  if (!ms || !Number.isFinite(ms) || ms < 1000) return "Nog geen scan uitgevoerd";
-  return new Date(ms).toLocaleString();
+function fmtPrice(n: any) {
+  const v = safeNum(n);
+  if (v === null) return "-";
+  // simpele prijs formatting
+  if (v >= 1) return v.toFixed(4);
+  if (v >= 0.01) return v.toFixed(6);
+  return v.toPrecision(4);
 }
 
-function TableBlock({ title, rows }: { title: string; rows: CoinRow[] }) {
+function safeDate(ts: any) {
+  const v = safeNum(ts);
+  if (v === null) return "Nog niet gescand";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "Nog niet gescand";
+  return d.toLocaleString();
+}
+
+function normalizeTables(json: ApiResponse): Required<ApiTables> {
+  const tables = json?.data?.tables ?? json?.tables ?? {};
+  return {
+    entry: Array.isArray(tables.entry) ? tables.entry : [],
+    almost: Array.isArray(tables.almost) ? tables.almost : [],
+    buildup: Array.isArray(tables.buildup) ? tables.buildup : [],
+    radar: Array.isArray(tables.radar) ? tables.radar : [],
+    runner: Array.isArray(tables.runner) ? tables.runner : [],
+  };
+}
+
+function normalizeStats(json: ApiResponse): ApiStats {
+  return json?.data?.stats ?? json?.stats ?? {};
+}
+
+async function fetchJson(url: string) {
+  const r = await fetch(url, { cache: "no-store" });
+  const ct = r.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const txt = await r.text();
+    throw new Error(`API gaf geen JSON terug. Eerste stuk:\n${txt.slice(0, 250)}`);
+  }
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(`API error ${r.status}: ${JSON.stringify(j).slice(0, 250)}`);
+  }
+  return (await r.json()) as ApiResponse;
+}
+
+function TableBlock({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: CoinRow[];
+}) {
   return (
-    <div style={{ marginTop: 18, padding: 14, borderRadius: 14, border: "1px solid rgba(255,255,255,.12)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>{title}</h2>
-        <div style={{ opacity: 0.8, fontSize: 12 }}>{rows.length} coins</div>
+    <div style={styles.block}>
+      <div style={styles.blockHeader}>
+        <div style={styles.blockTitle}>{title}</div>
+        <div style={styles.badge}>{rows.length}</div>
       </div>
 
-      {rows.length === 0 ? (
-        <div style={{ opacity: 0.75, padding: 12, borderRadius: 10, border: "1px dashed rgba(255,255,255,.18)" }}>
-          Nog leeg (wacht op scans / filters streng)
-        </div>
-      ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ opacity: 0.9, textAlign: "left" }}>
-                <th style={{ padding: "10px 8px" }}>Coin</th>
-                <th style={{ padding: "10px 8px" }}>Score</th>
-                <th style={{ padding: "10px 8px" }}>Timing</th>
-                <th style={{ padding: "10px 8px" }}>Setup</th>
-                <th style={{ padding: "10px 8px" }}>24h</th>
-                <th style={{ padding: "10px 8px" }}>14d</th>
-                <th style={{ padding: "10px 8px" }}>MCap</th>
-                <th style={{ padding: "10px 8px" }}>Vol</th>
-                <th style={{ padding: "10px 8px" }}>VM</th>
-                <th style={{ padding: "10px 8px" }}>OB(BG)</th>
-                <th style={{ padding: "10px 8px" }}>OB(BN)</th>
-                <th style={{ padding: "10px 8px" }}>Win</th>
+      <div style={styles.tableWrap}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>#</th>
+              <th style={styles.th}>Symbol</th>
+              <th style={styles.th}>Name</th>
+              <th style={styles.th}>Score</th>
+              <th style={styles.th}>24h%</th>
+              <th style={styles.th}>Mcap</th>
+              <th style={styles.th}>Vol</th>
+              <th style={styles.th}>VM</th>
+              <th style={styles.th}>Price</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td style={styles.td} colSpan={9}>
+                  Nog geen coins in deze tabel
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {rows.slice(0, 40).map((r) => (
-                <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,.08)" }}>
-                  <td style={{ padding: "10px 8px" }}>
-                    <div style={{ fontWeight: 700 }}>{r.sym}</div>
-                    <div style={{ opacity: 0.75, fontSize: 12 }}>{r.name}</div>
+            ) : (
+              rows.map((c, i) => (
+                <tr key={(c.id || c.sym || c.name || "row") + "-" + i}>
+                  <td style={styles.td}>{i + 1}</td>
+                  <td style={styles.td}>{(c.sym || "-").toUpperCase()}</td>
+                  <td style={styles.td}>{c.name || "-"}</td>
+                  <td style={styles.td}>{safeNum(c.score) ?? "-"}</td>
+                  <td style={styles.td}>{fmtPct(c.ch24)}</td>
+                  <td style={styles.td}>{fmtMoney(c.mcap)}</td>
+                  <td style={styles.td}>{fmtMoney(c.vol)}</td>
+                  <td style={styles.td}>
+                    {safeNum(c.volRatio) === null ? "-" : c.volRatio.toFixed(2)}
                   </td>
-                  <td style={{ padding: "10px 8px" }}>{r.score100}</td>
-                  <td style={{ padding: "10px 8px" }}>{r.timing}/4</td>
-                  <td style={{ padding: "10px 8px" }}>{r.setup}</td>
-                  <td style={{ padding: "10px 8px" }}>{fmtPct(r.ch24)}</td>
-                  <td style={{ padding: "10px 8px" }}>{fmtPct(r.ch14)}</td>
-                  <td style={{ padding: "10px 8px" }}>{fmtMoney(r.mcap)}</td>
-                  <td style={{ padding: "10px 8px" }}>{fmtMoney(r.vol)}</td>
-                  <td style={{ padding: "10px 8px" }}>{r.vm.toFixed(3)}</td>
-                  <td style={{ padding: "10px 8px" }}>{fmtRatio(r.obBitgetRatio)}</td>
-                  <td style={{ padding: "10px 8px" }}>{fmtRatio(r.obBinanceRatio)}</td>
-                  <td style={{ padding: "10px 8px" }}>{r.windowN}</td>
+                  <td style={styles.td}>{fmtPrice(c.price)}</td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length > 40 && <div style={{ opacity: 0.7, marginTop: 8 }}>Toont 40 / {rows.length}</div>}
-        </div>
-      )}
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
 export default function BullPage() {
-  const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [raw, setRaw] = useState<ApiResponse | null>(null);
 
-  async function load() {
-    setLoading(true);
+  const tables = raw ? normalizeTables(raw) : null;
+  const stats = raw ? normalizeStats(raw) : null;
+
+  const lastScan = raw?.ts ?? raw?.data?.ts;
+
+  async function load(force = false) {
     setErr(null);
+    setLoading(true);
     try {
-      const r = await fetch("/api/snapshot?side=bull", { cache: "no-store" });
-      if (!r.ok) throw new Error(`snapshot failed: ${r.status}`);
-      const j = (await r.json()) as Snapshot;
-      setSnap(j);
+      const url = force ? `${API_ENDPOINT}?force=1` : API_ENDPOINT;
+      const j = await fetchJson(url);
+      setRaw(j);
     } catch (e: any) {
-      setErr(String(e?.message || e));
+      setErr(e?.message || "Onbekende fout");
+      setRaw(null);
     } finally {
       setLoading(false);
     }
   }
 
-  async function forceScan() {
-    try {
-      await fetch("/api/scan", { cache: "no-store" });
-    } catch {}
-    await load();
-  }
-
   useEffect(() => {
-    load();
-    const t = setInterval(load, 30_000);
-    return () => clearInterval(t);
+    load(false);
   }, []);
 
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 20 }}>
-      <h1 style={{ margin: 0, fontSize: 34 }}>🐊 CryptoCroc — BULL</h1>
+    <div style={styles.page}>
+      <div style={styles.header}>
+        <div style={styles.h1}>🐊 CryptoCroc — BULL</div>
+        <div style={styles.sub}>Last scan: {safeDate(lastScan)}</div>
 
-      <div style={{ marginTop: 10, opacity: 0.85 }}>
-        BTC 24h: <b>{snap ? fmtPct(snap.btc24) : "-"}</b> — Mode: <b>{snap ? snap.mode : "-"}</b>
-      </div>
+        <div style={styles.actions}>
+          <button
+            style={styles.btn}
+            onClick={() => load(true)}
+            disabled={loading}
+          >
+            Force scan
+          </button>
 
-      <div style={{ marginTop: 8, opacity: 0.8 }}>
-        Last scan: <b>{snap ? dateNice(snap.updatedAt) : "..."}</b>
-      </div>
-
-      <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
-        <button
-          onClick={forceScan}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.18)",
-            background: "rgba(0,0,0,.25)",
-            color: "white"
-          }}
-        >
-          Force scan
-        </button>
-
-        <button
-          onClick={load}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,.18)",
-            background: "rgba(0,0,0,.12)",
-            color: "white"
-          }}
-        >
-          Refresh
-        </button>
-      </div>
-
-      {loading && <div style={{ marginTop: 16, opacity: 0.8 }}>Laden…</div>}
-      {err && (
-        <div style={{ marginTop: 16, color: "#ffd1d1" }}>
-          Error: {err}
-          <div style={{ opacity: 0.8, marginTop: 6 }}>
-            Check ook: <code>/api/scan</code> en <code>/api/snapshot?side=bull</code>
-          </div>
+          <a style={styles.link} href="/bear">
+            Naar BEAR →
+          </a>
         </div>
-      )}
 
-      {/* Altijd 5 tabellen renderen */}
-      <TableBlock title="RADAR" rows={snap?.radar || []} />
-      <TableBlock title="BUILDUP" rows={snap?.buildup || []} />
-      <TableBlock title="ALMOST READY" rows={snap?.almost || []} />
-      <TableBlock title="ENTRY" rows={snap?.entry || []} />
-      <TableBlock title="HOLD / SELL" rows={snap?.holdSell || []} />
-    </main>
+        {stats && (
+          <div style={styles.statsRow}>
+            <div style={styles.statChip}>Total: {stats.totalScanned ?? 0}</div>
+            <div style={styles.statChip}>Entry: {stats.entry ?? 0}</div>
+            <div style={styles.statChip}>Almost: {stats.almost ?? 0}</div>
+            <div style={styles.statChip}>Buildup: {stats.buildup ?? 0}</div>
+            <div style={styles.statChip}>Radar: {stats.radar ?? 0}</div>
+            <div style={styles.statChip}>Runner: {stats.runner ?? 0}</div>
+          </div>
+        )}
+      </div>
+
+      {err && <div style={styles.error}>❌ {err}</div>}
+
+      {!tables ? (
+        <div style={styles.block}>
+          {loading ? "Laden..." : "Geen data (nog niet gescand of fout)."}
+        </div>
+      ) : (
+        <>
+          <TableBlock title="1) ENTRY READY" rows={tables.entry} />
+          <TableBlock title="2) ALMOST READY" rows={tables.almost} />
+          <TableBlock title="3) BUILDUP" rows={tables.buildup} />
+          <TableBlock title="4) RADAR" rows={tables.radar} />
+          <TableBlock title="5) RUNNER ALERT" rows={tables.runner} />
+        </>
+      )}
+    </div>
   );
 }
+
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    padding: 18,
+    background: "radial-gradient(1200px 800px at 20% 10%, #0b3b2a 0%, #061f16 45%, #04150f 100%)",
+    color: "rgba(255,255,255,.92)",
+    fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+  },
+  header: {
+    maxWidth: 980,
+    margin: "0 auto 14px auto",
+  },
+  h1: {
+    fontSize: 34,
+    fontWeight: 800,
+    letterSpacing: 0.2,
+    marginBottom: 6,
+  },
+  sub: {
+    opacity: 0.75,
+    marginBottom: 12,
+  },
+  actions: {
+    display: "flex",
+    gap: 12,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  btn: {
+    border: "1px solid rgba(255,255,255,.18)",
+    background: "rgba(0,0,0,.25)",
+    color: "white",
+    padding: "10px 14px",
+    borderRadius: 12,
+    cursor: "pointer",
+  },
+  link: {
+    color: "rgba(255,255,255,.9)",
+    textDecoration: "none",
+    opacity: 0.9,
+  },
+  statsRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 10,
+  },
+  statChip: {
+    border: "1px solid rgba(255,255,255,.14)",
+    background: "rgba(0,0,0,.22)",
+    padding: "6px 10px",
+    borderRadius: 999,
+    fontSize: 13,
+  },
+  error: {
+    maxWidth: 980,
+    margin: "0 auto 12px auto",
+    padding: 12,
+    borderRadius: 12,
+    background: "rgba(255,0,0,.12)",
+    border: "1px solid rgba(255,0,0,.25)",
+  },
+  block: {
+    maxWidth: 980,
+    margin: "0 auto 14px auto",
+    borderRadius: 16,
+    border: "1px solid rgba(255,255,255,.14)",
+    background: "rgba(0,0,0,.22)",
+    padding: 12,
+    overflow: "hidden",
+  },
+  blockHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  blockTitle: {
+    fontSize: 15,
+    fontWeight: 800,
+    opacity: 0.95,
+  },
+  badge: {
+    fontSize: 12,
+    padding: "4px 10px",
+    borderRadius: 999,
+    border: "1px solid rgba(255,255,255,.16)",
+    background: "rgba(0,0,0,.22)",
+  },
+  tableWrap: {
+    width: "100%",
+    overflowX: "auto",
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: 13,
+  },
+  th: {
+    textAlign: "left",
+    padding: "10px 8px",
+    borderBottom: "1px solid rgba(255,255,255,.12)",
+    opacity: 0.85,
+    whiteSpace: "nowrap",
+  },
+  td: {
+    padding: "10px 8px",
+    borderBottom: "1px solid rgba(255,255,255,.08)",
+    whiteSpace: "nowrap",
+    opacity: 0.95,
+  },
+};
