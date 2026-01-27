@@ -1,12 +1,26 @@
 export default function Home() {
   return (
-    <main style={{ padding: 24, color: "white" }}>
-      <h1 style={{ fontSize: 28 }}>🐊 CryptoCroc</h1>
-      <p style={{ opacity: 0.8 }}>Kies een dashboard:</p>
-      <ul>
-        <li><a href="/bull" style={{ color: "white" }}>Bull Top10</a></li>
-        <li><a href="/bear" style={{ color: "white" }}>Bear Top10</a></li>
-      </ul>
-    </main>
+    <div className="container">
+      <div className="topbar">
+        <div style={{ fontWeight: 800 }}>CryptoCroc Scanner</div>
+        <div className="badge">Bull / Bear</div>
+      </div>
+
+      <div className="grid">
+        <div className="card">
+          <h2><span>BULL</span><span className="small">Small caps die kunnen stijgen</span></h2>
+          <div style={{ padding: 14, display: "flex", gap: 10 }}>
+            <a className="btn" href="/bull">Open BULL</a>
+          </div>
+        </div>
+
+        <div className="card">
+          <h2><span>BEAR</span><span className="small">Small caps die kunnen zakken</span></h2>
+          <div style={{ padding: 14, display: "flex", gap: 10 }}>
+            <a className="btn" href="/bear">Open BEAR</a>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
