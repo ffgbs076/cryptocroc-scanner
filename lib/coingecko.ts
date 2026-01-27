@@ -1,42 +1,57 @@
 // lib/coingecko.ts
-export type CGMarket = {
+export type CGRow = {
   id: string;
   symbol: string;
   name: string;
-  image?: string;
-  market_cap: number | null;
-  total_volume: number | null;
-  current_price: number | null;
+  current_price: number;
+  market_cap: number;
+  total_volume: number;
+  price_change_percentage_24h: number | null;
+  price_change_percentage_14d_in_currency: number | null;
 };
 
-const BASE = "https://api.coingecko.com/api/v3";
+const CG = "https://api.coingecko.com/api/v3";
 
-async function j<T>(url: string): Promise<T> {
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(`CoinGecko fetch failed ${r.status}: ${url}`);
-  return (await r.json()) as T;
+const num = (x: any, d = 0) => {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : d;
+};
+
+export async function fetchBTC24h(): Promise<number> {
+  const url = `${CG}/coins/markets?vs_currency=usd&ids=bitcoin&per_page=1&page=1&sparkline=false`;
+  const r = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
+  if (!r.ok) throw new Error(`CoinGecko BTC failed: ${r.status}`);
+  const j = (await r.json()) as any[];
+  return num(j?.[0]?.price_change_percentage_24h, 0);
 }
 
-export async function getCoinGeckoMarketsTop(pages = 2): Promise<CGMarket[]> {
-  // We halen top volume coins op (USD) in chunks van 250
-  const out: CGMarket[] = [];
-  for (let page = 1; page <= pages; page++) {
-    const url =
-      `${BASE}/coins/markets?vs_currency=usd&order=volume_desc&per_page=250&page=${page}` +
-      `&sparkline=false&price_change_percentage=24h`;
-    const rows = await j<any[]>(url);
+export async function fetchMarkets4PagesUSD(): Promise<CGRow[]> {
+  const out: CGRow[] = [];
 
-    for (const r of rows) {
+  for (let page = 1; page <= 4; page++) {
+    const url =
+      `${CG}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}` +
+      `&sparkline=false&price_change_percentage=14d`;
+
+    const r = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
+    if (!r.ok) throw new Error(`CoinGecko markets failed page ${page}: ${r.status}`);
+
+    const arr = (await r.json()) as any[];
+
+    for (const x of arr) {
       out.push({
-        id: String(r.id),
-        symbol: String(r.symbol || ""),
-        name: String(r.name || ""),
-        image: r.image ? String(r.image) : undefined,
-        market_cap: r.market_cap ?? null,
-        total_volume: r.total_volume ?? null,
-        current_price: r.current_price ?? null,
+        id: String(x.id),
+        symbol: String(x.symbol),
+        name: String(x.name),
+        current_price: num(x.current_price, 0),
+        market_cap: num(x.market_cap, 0),
+        total_volume: num(x.total_volume, 0),
+        price_change_percentage_24h: x.price_change_percentage_24h == null ? null : num(x.price_change_percentage_24h, 0),
+        price_change_percentage_14d_in_currency:
+          x.price_change_percentage_14d_in_currency == null ? null : num(x.price_change_percentage_14d_in_currency, 0)
       });
     }
   }
+
   return out;
 }
