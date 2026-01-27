@@ -1,5 +1,5 @@
 // app/lib/store.ts
-// Simpele in-memory store (werkt op Vercel zolang instance leeft).
+// Super simpele in-memory store (werkt zolang Vercel instance leeft)
 
 type AnyVal = any;
 
@@ -23,14 +23,10 @@ export function storeSet<T = AnyVal>(key: string, value: T): void {
   s.set(key, value);
 }
 
-export function storeDel(key: string): void {
-  const s = getStore();
-  s.delete(key);
-}
-
 export function storeIncr(key: string, by = 1): number {
-  const cur = storeGet<number>(key) ?? 0;
+  const s = getStore();
+  const cur = Number(s.get(key) ?? 0);
   const next = cur + by;
-  storeSet(key, next);
+  s.set(key, next);
   return next;
 }
