@@ -1,70 +1,55 @@
-import fs from "fs";
-import path from "path";
+// app/lib/store.ts
+export const runtime = "nodejs";
 
-let kv: any = null;
+type JsonValue = any;
 
-// KV is optioneel: alleen gebruiken als env bestaat
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mod = require("@vercel/kv");
-  kv = mod.kv;
-} catch {
-  kv = null;
+const URL =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.KV_REST_API_URL ||
+  "";
+
+const TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.KV_REST_API_TOKEN ||
+  "";
+
+async function redis(cmd: string, ...args: string[]) {
+  if (!URL || !TOKEN) return null;
+
+  const safe = (s: string) => encodeURIComponent(s);
+  const endpoint = `${URL}/${cmd}/${args.map(safe).join("/")}`;
+
+  const r = await fetch(endpoint, {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    cache: "no-store",
+  });
+
+  if (!r.ok) return null;
+  return r.json();
 }
 
-const HAS_KV =
-  !!process.env.KV_REST_API_URL &&
-  !!process.env.KV_REST_API_TOKEN;
+export async function storeGet<T = JsonValue>(key: string): Promise<T | null> {
+  const res = await redis("get", key);
+  if (!res || !("result" in res)) return null;
 
-function tmpFile() {
-  return path.join("/tmp", "cryptocroc-store.json");
-}
+  const v = res.result;
+  if (v == null) return null;
 
-function readTmp(): any {
-  const f = tmpFile();
   try {
-    if (!fs.existsSync(f)) return {};
-    return JSON.parse(fs.readFileSync(f, "utf8") || "{}");
+    return JSON.parse(v) as T;
   } catch {
-    return {};
+    return v as T;
   }
 }
 
-function writeTmp(obj: any) {
-  const f = tmpFile();
-  fs.writeFileSync(f, JSON.stringify(obj ?? {}, null, 2), "utf8");
+export async function storeSet(key: string, value: JsonValue): Promise<boolean> {
+  const raw = typeof value === "string" ? value : JSON.stringify(value);
+  const res = await redis("set", key, raw);
+  return !!res;
 }
 
-export async function getJSON<T>(key: string, fallback: T): Promise<T> {
-  // 1) KV (als aanwezig)
-  if (kv && HAS_KV) {
-    try {
-      const v = await kv.get(key);
-      if (v == null) return fallback;
-      return v as T;
-    } catch {
-      // ga door naar tmp
-    }
-  }
-
-  // 2) /tmp fallback
-  const obj = readTmp();
-  return (obj[key] ?? fallback) as T;
-}
-
-export async function setJSON(key: string, value: any): Promise<void> {
-  // 1) KV (als aanwezig)
-  if (kv && HAS_KV) {
-    try {
-      await kv.set(key, value);
-      return;
-    } catch {
-      // ga door naar tmp
-    }
-  }
-
-  // 2) /tmp fallback
-  const obj = readTmp();
-  obj[key] = value;
-  writeTmp(obj);
+export async function storeIncr(key: string, by = 1): Promise<number> {
+  const res = await redis("incrby", key, String(by));
+  if (!res || !("result" in res)) return 0;
+  return Number(res.result) || 0;
 }
