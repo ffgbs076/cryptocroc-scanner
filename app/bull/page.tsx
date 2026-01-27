@@ -18,6 +18,21 @@ type Tables = {
   runner: CoinRow[];
 };
 
+type ApiScanResponse = {
+  ok: boolean;
+  mode?: "BULL" | "BEAR";
+  now?: number;
+  refreshSeconds?: number;
+
+  radar?: CoinRow[];
+  buildup?: CoinRow[];
+  almost?: CoinRow[];
+  entry?: CoinRow[];
+  runner?: CoinRow[];
+
+  error?: string;
+};
+
 export default function BullPage() {
   const [loading, setLoading] = useState(true);
   const [tables, setTables] = useState<Tables | null>(null);
@@ -25,12 +40,14 @@ export default function BullPage() {
 
   async function fetchJson(url: string) {
     const r = await fetch(url, { cache: "no-store" });
-    const ct = r.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) {
-      const txt = await r.text();
-      throw new Error(`API gaf geen JSON terug. Eerste stuk: ${txt.slice(0, 80)}`);
+    const txt = await r.text();
+
+    // Probeer altijd JSON te parsen (ook als content-type ontbreekt)
+    try {
+      return JSON.parse(txt);
+    } catch {
+      throw new Error(`API gaf geen JSON terug. Eerste stuk: ${txt.slice(0, 120)}`);
     }
-    return await r.json();
   }
 
   async function load(force = false) {
@@ -38,29 +55,28 @@ export default function BullPage() {
     setErr(null);
 
     try {
-      if (!force) {
-        const snap = await fetchJson("/api/snapshot?side=bull");
-        const snapData = snap?.data || null;
+      const url = force
+        ? "/api/scan?side=bull&scan=1"
+        : "/api/scan?side=bull";
 
-        if (!snapData?.tables) {
-          return await load(true);
-        }
+      const data = (await fetchJson(url)) as ApiScanResponse;
 
-        setTables(snapData.tables);
-        return;
-      }
-
-      const scan = await fetchJson("/api/scan?side=bull&force=1");
-      const scanData = scan?.data || null;
-
-      if (!scanData?.tables) {
+      if (!data || data.ok !== true) {
+        setErr(data?.error || "API error (ok != true)");
         setTables({ radar: [], buildup: [], almost: [], entry: [], runner: [] });
         return;
       }
 
-      setTables(scanData.tables);
+      setTables({
+        radar: data.radar || [],
+        buildup: data.buildup || [],
+        almost: data.almost || [],
+        entry: data.entry || [],
+        runner: data.runner || [],
+      });
     } catch (e: any) {
       setErr(String(e?.message || e));
+      setTables({ radar: [], buildup: [], almost: [], entry: [], runner: [] });
     } finally {
       setLoading(false);
     }
@@ -102,15 +118,15 @@ export default function BullPage() {
                   <td style={{ padding: "8px 6px" }}>{r.timing}/4</td>
                   <td style={{ padding: "8px 6px" }}>{r.cons}%</td>
                   <td style={{ padding: "8px 6px" }}>{r.perf}%</td>
-                  <td style={{ padding: "8px 6px" }}>{Number(r.ch24).toFixed(2)}</td>
-                  <td style={{ padding: "8px 6px" }}>{Number(r.volRatio).toFixed(3)}</td>
+                  <td style={{ padding: "8px 6px" }}>{Number(r.ch24 || 0).toFixed(2)}</td>
+                  <td style={{ padding: "8px 6px" }}>{Number(r.volRatio || 0).toFixed(3)}</td>
                   <td style={{ padding: "8px 6px" }}>{r.runnerHits}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
                   <td style={{ padding: "10px 6px", opacity: 0.7 }} colSpan={8}>
-                    Geen coins (nog). Laat de pinger 2-3 keer lopen.
+                    Geen coins (nog). Klik even “Force scan”.
                   </td>
                 </tr>
               )}
