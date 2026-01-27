@@ -1,9 +1,8 @@
 export const runtime = "nodejs";
 
+import { runScan } from "@/lib/scan";
+
 export async function GET() {
-  return Response.json({
-    ok: true,
-    note: "Scan stub. Straks roept dit lib/scan.ts aan en update KV state.",
-    ts: Date.now()
-  });
+  const st = await runScan();
+  return Response.json({ ok: true, updatedAt: st.updatedAt, btc24: st.btc24 });
 }
