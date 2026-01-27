@@ -1,33 +1,27 @@
 // app/api/snapshot/route.ts
-import { NextResponse } from "next/server";
-import { redisGet } from "@/app/lib/redis";
+
+import { NextRequest, NextResponse } from "next/server";
+import { storeGet, storeIncr } from "@/app/lib/store";
+import type { Side, ScanResult } from "@/app/lib/scan";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Side = "bull" | "bear";
+export async function GET(req: NextRequest) {
+  storeIncr("hits:api:snapshot", 1);
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const side = searchParams.get("side") as Side | null;
+  const url = new URL(req.url);
+  const side = (url.searchParams.get("side") || "bull").toLowerCase() as Side;
 
   if (side !== "bull" && side !== "bear") {
-    return NextResponse.json(
-      { ok: false, error: "side must be bull or bear" },
-      { status: 400 }
-    );
+    return NextResponse.json({ ok: false, error: "side must be bull or bear" }, { status: 400 });
   }
 
-  const key = side === "bull"
-    ? "cc:snapshot:bull"
-    : "cc:snapshot:bear";
-
-  const data = redisGet(key);
-
+  const snap = storeGet<ScanResult>(`snap:${side}`);
   return NextResponse.json({
     ok: true,
     side,
-    data: data ?? null,
     ts: Date.now(),
+    data: snap || null
   });
 }
