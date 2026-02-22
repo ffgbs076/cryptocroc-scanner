@@ -21,22 +21,18 @@ function makeChart(el) {
   });
 }
 
-function safeSetMarkers(series, markers) {
+// markers: werkt op v4, en faalt netjes op v5 builds die het anders doen
+function trySetMarkers(series, markers) {
   try {
-    // v4: series.setMarkers bestaat
     if (typeof series.setMarkers === "function") {
       series.setMarkers(markers);
-      return true;
+      return;
     }
-    // v5: sommige builds hebben createSeriesMarkers
     if (typeof LightweightCharts.createSeriesMarkers === "function") {
       LightweightCharts.createSeriesMarkers(series, markers);
-      return true;
+      return;
     }
-  } catch (e) {
-    console.warn("Markers not supported:", e);
-  }
-  return false;
+  } catch (e) {}
 }
 
 async function init() {
@@ -48,41 +44,42 @@ async function init() {
   if (!forestEl) throw new Error("Missing #forestChart");
 
   // --------------------
-  // PRICE (candles)
+  // PRICE CHART
   // --------------------
   const priceChart = makeChart(priceEl);
 
-  // ✅ v5: addSeries(CandlestickSeries)
-  const candlesSeries = priceChart.addSeries(LightweightCharts.CandlestickSeries, {});
-  candlesSeries.setData(data.candles);
+  // ✅ v5:
+  const candleSeries = priceChart.addSeries(LightweightCharts.CandlestickSeries, {});
+  candleSeries.setData(data.candles || []);
 
-  const markers = (data.turningPoints || [])
-    .filter(tp => tp && tp.time && (tp.type === "up" || tp.type === "down"))
-    .map(tp => ({
-      time: tp.time,
-      position: tp.type === "up" ? "belowBar" : "aboveBar",
-      shape: tp.type === "up" ? "arrowUp" : "arrowDown",
-      text: tp.type === "up" ? "BIAS UP" : "BIAS DOWN"
-    }));
+  const markers = (data.turningPoints || []).map(tp => ({
+    time: tp.time,
+    position: tp.type === "up" ? "belowBar" : "aboveBar",
+    shape: tp.type === "up" ? "arrowUp" : "arrowDown",
+    text: tp.type === "up" ? "BIAS UP" : "BIAS DOWN"
+  }));
 
-  if (markers.length) safeSetMarkers(candlesSeries, markers);
+  if (markers.length) trySetMarkers(candleSeries, markers);
 
   // --------------------
-  // FOREST (line)
+  // FOREST CHART
   // --------------------
   const forestChart = makeChart(forestEl);
 
-  // ✅ v5: addSeries(LineSeries)
+  // ✅ v5:
   const zeroLine = forestChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 1 });
   zeroLine.setData((data.candles || []).map(c => ({ time: c.time, value: 0 })));
 
-  const forestLine = forestChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 2 });
-  const forestData = (data.candles || []).map((c, i) => {
-    const v = (data.forest && data.forest[i] != null) ? Number(data.forest[i]) : null;
-    return v == null ? null : ({ time: c.time, value: v });
-  }).filter(Boolean);
+  const forestSeries = forestChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 2 });
 
-  forestLine.setData(forestData);
+  const forestLine = (data.candles || [])
+    .map((c, i) => {
+      const v = data.forest?.[i];
+      return v == null ? null : { time: c.time, value: Number(v) };
+    })
+    .filter(Boolean);
+
+  forestSeries.setData(forestLine);
 
   // Sync zoom/scroll
   priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
@@ -101,5 +98,7 @@ async function init() {
 
 init().catch(err => {
   console.error(err);
-  document.body.innerHTML = `<pre style="color:#ff6666;padding:16px;white-space:pre-wrap;">${String(err?.message || err)}</pre>`;
+  document.body.innerHTML = `<pre style="color:#ff6666;padding:16px;white-space:pre-wrap;">${String(
+    err?.message || err
+  )}</pre>`;
 });
