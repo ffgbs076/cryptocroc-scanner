@@ -10,7 +10,6 @@ function ema(values, period) {
   const k = 2 / (period + 1);
   const out = new Array(values.length).fill(null);
   let prev = null;
-
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
     if (v == null) continue;
@@ -35,19 +34,17 @@ function sma(values, period) {
   return out;
 }
 
+// Wilder RSI (stabiel)
 function rsi(closes, period = 14) {
   const out = new Array(closes.length).fill(null);
   if (closes.length < period + 1) return out;
 
-  let gain = 0;
-  let loss = 0;
-
+  let gain = 0, loss = 0;
   for (let i = 1; i <= period; i++) {
     const diff = closes[i] - closes[i - 1];
     if (diff >= 0) gain += diff;
     else loss -= diff;
   }
-
   gain /= period;
   loss /= period;
 
@@ -63,51 +60,92 @@ function rsi(closes, period = 14) {
 
     out[i] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
   }
-
   return out;
 }
 
-async function fetchCoinbaseWeeklyCandles() {
-  // Geen start/end -> Coinbase geeft “meest recente candles” terug (max ~300)
+// ==== CoinGecko daily closes -> build weekly OHLC ====
+async function fetchDailyCloses(days = 2000) {
   const url =
-    "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=604800";
+    `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=${days}&interval=daily`;
 
   const r = await fetchFn(url, {
-    headers: { "User-Agent": "btc-forest-tv" }
+    headers: {
+      "accept": "application/json",
+      "user-agent": "btc-forest-tv"
+    }
   });
 
-  if (!r.ok) throw new Error(`Coinbase error: ${r.status}`);
+  if (!r.ok) throw new Error(`CoinGecko error: ${r.status}`);
 
-  const arr = await r.json();
-
-  if (!Array.isArray(arr) || arr.length === 0) {
-    throw new Error("Coinbase returned empty candles");
+  const j = await r.json();
+  if (!j?.prices || !Array.isArray(j.prices) || j.prices.length < 10) {
+    throw new Error("CoinGecko returned no prices");
   }
 
-  // Coinbase format: [ time, low, high, open, close, volume ] (DESC)
-  const candles = arr
-    .map(d => ({
-      time: Number(d[0]), // seconds
-      low: Number(d[1]),
-      high: Number(d[2]),
-      open: Number(d[3]),
-      close: Number(d[4])
-    }))
-    .sort((a, b) => a.time - b.time);
+  // prices: [ [ms, price], ... ]
+  return j.prices.map(p => ({ ms: Number(p[0]), price: Number(p[1]) }));
+}
 
-  return candles;
+// Week start = maandag 00:00 UTC (TradingView-achtig)
+function weekStartUTC(ms) {
+  const d = new Date(ms);
+  const day = d.getUTCDay(); // 0=Sun..6=Sat
+  const diffToMon = (day === 0 ? -6 : 1 - day); // naar maandag
+  const mon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0));
+  mon.setUTCDate(mon.getUTCDate() + diffToMon);
+  return mon.getTime();
+}
+
+function buildWeeklyCandlesFromDaily(daily) {
+  // group by monday-start
+  const map = new Map();
+
+  for (const row of daily) {
+    const ws = weekStartUTC(row.ms);
+    if (!map.has(ws)) {
+      map.set(ws, {
+        ws,
+        open: row.price,
+        high: row.price,
+        low: row.price,
+        close: row.price
+      });
+    } else {
+      const c = map.get(ws);
+      c.high = Math.max(c.high, row.price);
+      c.low = Math.min(c.low, row.price);
+      c.close = row.price; // laatste dag in de week wordt close
+    }
+  }
+
+  const weeks = Array.from(map.values()).sort((a, b) => a.ws - b.ws);
+
+  // naar LightweightCharts format: time in seconds
+  return weeks.map(w => ({
+    time: Math.floor(w.ws / 1000),
+    open: w.open,
+    high: w.high,
+    low: w.low,
+    close: w.close
+  }));
 }
 
 export default async function handler(req, res) {
   try {
-    const candles = await fetchCoinbaseWeeklyCandles();
+    // 2000 dagen ≈ 285 weken (genoeg voor MA200w)
+    const daily = await fetchDailyCloses(2000);
+    const candles = buildWeeklyCandlesFromDaily(daily);
+
+    if (candles.length < 220) {
+      throw new Error(`Too few weekly candles: ${candles.length}`);
+    }
+
     const closes = candles.map(c => c.close);
 
-    // MA200 kan met ~300 candles, oké
     const ma200 = sma(closes, 200);
     const rsi14 = rsi(closes, 14);
 
-    // Forest “bias”: stijgdruk/daldruk (geen prijs-target)
+    // Forest “bias” = stijgdruk/daldruk (geen prijs target)
     const biasRaw = closes.map((price, i) => {
       if (ma200[i] == null || rsi14[i] == null) return 0;
 
