@@ -1,15 +1,12 @@
-EOF
 {
   "name": "cryptocroc-forest-tv",
   "private": true,
   "version": "1.0.0",
   "description": "BTC weekly candles + Forest line (TradingView style) on Vercel",
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
   },
   "scripts": {
-    "build": "echo \"no build\"",
-    "dev": "node -e \"console.log('Use: vercel dev')\""
+    "build": "echo \"no build needed\""
   }
 }
-EOF
