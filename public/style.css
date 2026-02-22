@@ -32,15 +32,6 @@ html,body{
   margin-top:4px;
 }
 
-.chart{
-  width:100%;
-}
-
-.chart.price{
-  height:62vh;
-}
-
-.chart.forest{
-  height:28vh;
-  margin-top:8px;
-}
+.chart{ width:100%; }
+.chart.price{ height:62vh; }
+.chart.forest{ height:28vh; margin-top:8px; }
