@@ -1,13 +1,46 @@
-body {
-  margin: 0;
-  background: #0e1117;
-  font-family: Arial, sans-serif;
+:root{
+  --bg:#0e1117;
+  --grid:#222;
+  --text:#d6d6d6;
 }
 
-#chart {
-  height: 60vh;
+html,body{
+  height:100%;
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:Arial, sans-serif;
 }
 
-#forest {
-  height: 30vh;
+.wrap{
+  max-width:1200px;
+  margin:0 auto;
+}
+
+.topbar{
+  padding:14px 14px 8px 14px;
+}
+
+.title{
+  font-size:18px;
+  font-weight:700;
+}
+
+.subtitle{
+  font-size:12px;
+  opacity:0.75;
+  margin-top:4px;
+}
+
+.chart{
+  width:100%;
+}
+
+.chart.price{
+  height:62vh;
+}
+
+.chart.forest{
+  height:28vh;
+  margin-top:8px;
 }
