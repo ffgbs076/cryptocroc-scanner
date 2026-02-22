@@ -23,12 +23,10 @@ function makeChart(el) {
 async function init() {
   const data = await loadData();
 
-  // ===== Price chart =====
   const priceChart = makeChart(document.getElementById("priceChart"));
   const candles = priceChart.addCandlestickSeries();
   candles.setData(data.candles);
 
-  // Markers (turning points)
   const markers = (data.turningPoints || []).map(tp => ({
     time: tp.time,
     position: tp.type === "up" ? "belowBar" : "aboveBar",
@@ -38,26 +36,24 @@ async function init() {
   }));
   candles.setMarkers(markers);
 
-  // ===== Forest chart (bias mountain) =====
   const forestChart = makeChart(document.getElementById("forestChart"));
 
-  // Baseline 0-lijn (zodat je “boven/onder 0” ziet)
   const zeroLine = forestChart.addLineSeries({ lineWidth: 1 });
   zeroLine.setData(data.candles.map(c => ({ time: c.time, value: 0 })));
 
-  // Forest lijn
   const forestLine = forestChart.addLineSeries({
     color: "#00ff88",
     lineWidth: 2
   });
 
-  const forestData = data.candles.map((c, i) => ({
-    time: c.time,
-    value: (data.forest[i] ?? 0)
-  }));
-  forestLine.setData(forestData);
+  forestLine.setData(
+    data.candles.map((c, i) => ({
+      time: c.time,
+      value: data.forest[i] ?? 0
+    }))
+  );
 
-  // Sync zoom/scroll (TradingView feel)
+  // Sync time range
   priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
     if (range) forestChart.timeScale().setVisibleRange(range);
   });
