@@ -8,111 +8,134 @@ function clamp(x, min, max) {
 
 function ema(values, period) {
   const k = 2 / (period + 1);
-  let result = [];
-  let prev = values[0];
+  const out = new Array(values.length).fill(null);
 
+  let prev = null;
   for (let i = 0; i < values.length; i++) {
-    prev = values[i] * k + prev * (1 - k);
-    result.push(prev);
+    const v = values[i];
+    if (v == null) continue;
+    if (prev == null) prev = v;
+    else prev = v * k + prev * (1 - k);
+    out[i] = prev;
   }
-  return result;
+  return out;
 }
 
 function sma(values, period) {
-  let result = [];
+  const out = new Array(values.length).fill(null);
+  let sum = 0;
+  let count = 0;
+  const q = [];
+
   for (let i = 0; i < values.length; i++) {
-    if (i < period - 1) {
-      result.push(null);
-    } else {
-      let sum = 0;
-      for (let j = 0; j < period; j++) {
-        sum += values[i - j];
-      }
-      result.push(sum / period);
+    const v = values[i];
+    q.push(v);
+    sum += v;
+    count++;
+
+    if (count > period) {
+      sum -= q.shift();
+      count--;
     }
+    if (count === period) out[i] = sum / period;
   }
-  return result;
+  return out;
 }
 
 function rsi(closes, period = 14) {
-  let gains = [];
-  let losses = [];
+  const out = new Array(closes.length).fill(null);
+  if (closes.length < period + 1) return out;
 
-  for (let i = 1; i < closes.length; i++) {
+  // Wilder RSI (EMA-like smoothing)
+  let gain = 0;
+  let loss = 0;
+
+  for (let i = 1; i <= period; i++) {
     const diff = closes[i] - closes[i - 1];
-    gains.push(diff > 0 ? diff : 0);
-    losses.push(diff < 0 ? -diff : 0);
+    if (diff >= 0) gain += diff;
+    else loss -= diff;
   }
 
-  const avgGain = sma(gains, period);
-  const avgLoss = sma(losses, period);
+  gain /= period;
+  loss /= period;
 
-  let rsis = [null];
+  out[period] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
 
-  for (let i = 0; i < avgGain.length; i++) {
-    if (!avgGain[i] || !avgLoss[i]) {
-      rsis.push(null);
-    } else {
-      const rs = avgGain[i] / avgLoss[i];
-      rsis.push(100 - 100 / (1 + rs));
-    }
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const g = diff > 0 ? diff : 0;
+    const l = diff < 0 ? -diff : 0;
+
+    gain = (gain * (period - 1) + g) / period;
+    loss = (loss * (period - 1) + l) / period;
+
+    out[i] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
   }
 
-  return rsis;
+  return out;
 }
 
 export default async function handler(req, res) {
   try {
-    const response = await fetchFn(
-      "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1w&limit=300"
-    );
+    // Weekly BTC candles (no key)
+    const url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1w&limit=400";
+    const r = await fetchFn(url);
+    if (!r.ok) throw new Error(`Binance error: ${r.status}`);
 
-    const data = await response.json();
+    const raw = await r.json();
 
-    const candles = data.map(d => ({
+    const candles = raw.map(d => ({
       time: Math.floor(d[0] / 1000),
-      open: parseFloat(d[1]),
-      high: parseFloat(d[2]),
-      low: parseFloat(d[3]),
-      close: parseFloat(d[4])
+      open: Number(d[1]),
+      high: Number(d[2]),
+      low: Number(d[3]),
+      close: Number(d[4])
     }));
 
     const closes = candles.map(c => c.close);
 
+    // Core indicators
     const ma200 = sma(closes, 200);
-    const rsiVals = rsi(closes, 14);
+    const rsi14 = rsi(closes, 14);
 
-    let biasRaw = closes.map((price, i) => {
-      if (!ma200[i] || !rsiVals[i]) return 0;
+    // Forest “bias” = richtingdruk (trend + momentum) + mean reversion (terugtrek)
+    // Dit is expres GEEN “prijs target”, maar “kans op stijg/dal fases”.
+    const biasRaw = closes.map((price, i) => {
+      if (ma200[i] == null || rsi14[i] == null) return 0;
 
-      let trend = price > ma200[i] ? 1 : -1;
-      let momentum = rsiVals[i] > 50 ? 1 : -1;
+      // Trend druk
+      const trend = price > ma200[i] ? 1 : -1;
 
-      let distance = (price / ma200[i] - 1);
-      let revert = -clamp(distance * 5, -1, 1);
+      // Momentum druk
+      const momentum = rsi14[i] >= 50 ? 1 : -1;
 
+      // Mean reversion: ver boven MA => afkoel kans, ver onder => rebound kans
+      const distance = price / ma200[i] - 1;          // bv. +0.20 = 20% boven MA
+      const revert = -clamp(distance * 4, -1, 1);     // schaal 4 = “hoe snel terugtrekken”
+
+      // Mix (som = 1.0)
       return trend * 0.5 + momentum * 0.3 + revert * 0.2;
     });
 
-    const forest = ema(biasRaw, 5);
+    // Smooth zodat het “TradingView clean” wordt
+    const forest = ema(biasRaw, 6).map(v => (v == null ? 0 : v));
 
-    let turningPoints = [];
+    // Turning points: waar bias door 0 kruist
+    const turningPoints = [];
     for (let i = 1; i < forest.length; i++) {
-      if (forest[i - 1] < 0 && forest[i] > 0) {
-        turningPoints.push({ time: candles[i].time, type: "up" });
-      }
-      if (forest[i - 1] > 0 && forest[i] < 0) {
-        turningPoints.push({ time: candles[i].time, type: "down" });
-      }
+      const a = forest[i - 1];
+      const b = forest[i];
+      if (a <= 0 && b > 0) turningPoints.push({ time: candles[i].time, type: "up" });
+      if (a >= 0 && b < 0) turningPoints.push({ time: candles[i].time, type: "down" });
     }
 
+    res.setHeader("Content-Type", "application/json");
     res.status(200).json({
       candles,
-      forest,
+      forest,          // -1..+1 (ongeveer), “mountain/bias”
       turningPoints
     });
-
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: String(err?.message || err) });
   }
 }
