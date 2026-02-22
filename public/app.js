@@ -74,7 +74,7 @@ async function init(){
     strength: data.strength
   }, null, 2);
 
-  // --- PRICE CHART ---
+  // PRICE CHART
   const priceEl = $("priceChart");
   const priceChart = makeChart(priceEl);
 
@@ -88,7 +88,7 @@ async function init(){
 
   candleSeries.setData(candles);
 
-  // Overlays EMA 20/50/200
+  // EMA overlays
   const ema20 = priceChart.addLineSeries({ lineWidth: 1, color: "rgba(255,255,255,0.45)" });
   const ema50 = priceChart.addLineSeries({ lineWidth: 1, color: "rgba(255,255,255,0.30)" });
   const ema200 = priceChart.addLineSeries({ lineWidth: 1, color: "rgba(255,255,255,0.18)" });
@@ -97,7 +97,7 @@ async function init(){
   ema50.setData(toLineData(candles, data.overlays?.ema50));
   ema200.setData(toLineData(candles, data.overlays?.ema200));
 
-  // Turning points markers on price
+  // Markers on price
   const priceMarkers = turningPoints.map(tp => ({
     time: tp.time,
     position: tp.type === "up" ? "belowBar" : "aboveBar",
@@ -109,34 +109,30 @@ async function init(){
 
   priceChart.timeScale().fitContent();
 
-  // --- FOREST CHART ---
+  // FOREST CHART
   const forestEl = $("forestChart");
   const forestChart = makeChart(forestEl);
 
-  // Zero line
   const zero = forestChart.addLineSeries({ lineWidth: 1, color: "rgba(255,255,255,0.18)" });
   zero.setData(constLineData(candles, 0));
 
-  // Zone lines (±zone)
   const zoneUp = forestChart.addLineSeries({ lineWidth: 1, color: "rgba(0,200,83,0.35)" });
   const zoneDn = forestChart.addLineSeries({ lineWidth: 1, color: "rgba(255,82,82,0.35)" });
   zoneUp.setData(constLineData(candles, thr.zone));
   zoneDn.setData(constLineData(candles, -thr.zone));
 
-  // Forest line
   const forestLine = forestChart.addLineSeries({ lineWidth: 2, color: "#3aa0ff" });
   forestLine.setData(toLineData(candles, forest));
 
-  // Cycle line (thin)
   const cycleLine = forestChart.addLineSeries({ lineWidth: 1, color: "rgba(170, 120, 255, 0.9)" });
   cycleLine.setData(toLineData(candles, cycle));
 
-  // Turning markers on forest
+  // Markers on forest
   const forestMarkers = turningPoints.map(tp => ({
     time: tp.time,
     position: tp.type === "up" ? "belowBar" : "aboveBar",
     color: tp.type === "up" ? "#00c853" : "#ff5252",
-    shape: tp.type === "up" ? "circle" : "circle",
+    shape: "circle",
     text: tp.type === "up" ? "UP" : "DOWN"
   }));
   forestLine.setMarkers(forestMarkers);
@@ -150,7 +146,6 @@ async function init(){
   } else {
     const v = last.v;
     const s = data.strength || "unknown";
-
     if (v >= thr.turn) setStatus(`Forest: Bullish (${v.toFixed(2)}) • ${s}`, s === "strong" ? "good" : "mid");
     else if (v <= -thr.turn) setStatus(`Forest: Bearish (${v.toFixed(2)}) • ${s}`, s === "strong" ? "bad" : "mid");
     else setStatus(`Forest: Neutral (${v.toFixed(2)}) • ${s}`, "mid");
