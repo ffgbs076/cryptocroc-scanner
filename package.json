@@ -1,11 +1,12 @@
 {
-  "name": "cryptocroc-forest-tv",
+  "name": "cryptocroc-forest-site",
   "private": true,
   "version": "1.0.0",
+  "description": "BTC weekly candles + Forest (bias) on Vercel",
   "engines": {
     "node": "20.x"
   },
   "scripts": {
-    "build": "echo no build needed"
+    "build": "echo \"no build\""
   }
 }
