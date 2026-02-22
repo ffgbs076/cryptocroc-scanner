@@ -3,81 +3,38 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CryptoCroc Forest</title>
-  <style>
-    :root{
-      --bg:#0e1117;
-      --panel:#0b1220;
-      --text:#d6d6d6;
-      --muted:#8aa0b8;
-      --good:#00c853;
-      --bad:#ff5252;
-      --mid:#ffb300;
-      --line:rgba(255,255,255,0.08);
-    }
-    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto;}
-    .wrap{max-width:1100px;margin:0 auto;padding:14px;}
-    .top{
-      display:flex;gap:12px;align-items:center;justify-content:space-between;
-      padding:12px 14px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:12px;
-    }
-    .title{font-weight:700;letter-spacing:0.2px}
-    #statusPill{font-weight:700}
-    #meta{color:var(--muted);font-size:12px;margin-top:4px}
-    .grid{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px}
-    .panel{
-      background:rgba(255,255,255,0.02);
-      border:1px solid var(--line);
-      border-radius:12px;
-      overflow:hidden;
-    }
-    .panelHead{
-      display:flex;align-items:center;justify-content:space-between;
-      padding:10px 12px;border-bottom:1px solid var(--line);
-      color:var(--muted);font-size:12px;
-    }
-    #priceChart{height:420px}
-    #forestChart{height:260px}
-    pre{
-      margin:0;padding:12px;overflow:auto;font-size:12px;color:var(--muted);
-      border-top:1px solid var(--line);
-      background:rgba(0,0,0,0.18);
-    }
-    a{color:#7fb7ff;text-decoration:none}
-  </style>
+  <title>Forest (BTC Weekly)</title>
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="top">
-      <div>
-        <div class="title">CryptoCroc Forest (BTC • Weekly)</div>
-        <div id="meta">Loading…</div>
-      </div>
-      <div id="statusPill">Loading…</div>
-    </div>
+  <header class="top">
+    <div class="title">Forest line (bias) — BTC Weekly</div>
+    <div id="status" class="status">Loading…</div>
+  </header>
 
-    <div class="grid">
-      <div class="panel">
-        <div class="panelHead">
-          <div>Price (candles)</div>
-          <div><a href="/api/forest" target="_blank" rel="noreferrer">open /api/forest</a></div>
-        </div>
-        <div id="priceChart"></div>
-      </div>
+  <section class="meta">
+    <div id="metaText">—</div>
+    <pre id="debug" class="debug">—</pre>
+  </section>
 
-      <div class="panel">
-        <div class="panelHead">
-          <div>Forest line (bias)</div>
-          <div>0 = neutraal</div>
-        </div>
-        <div id="forestChart"></div>
-        <pre id="debug"></pre>
-      </div>
-    </div>
-  </div>
+  <main class="grid">
+    <section class="panel">
+      <div class="panelTitle">Price</div>
+      <div id="priceChart" class="chart"></div>
+    </section>
 
-  <!-- Lightweight Charts v5 (standalone) -->
-  <script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
+    <section class="panel">
+      <div class="panelTitle">Forest</div>
+      <div id="forestChart" class="chart small"></div>
+      <div class="legend">
+        <span>0 = neutral</span>
+        <span id="thrText">—</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- Pin to v4.2.0 (has addCandlestickSeries) -->
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
