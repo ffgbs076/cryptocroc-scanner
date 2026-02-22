@@ -1,58 +1,69 @@
 async function loadData() {
-  const res = await fetch('/api/forest');
+  const res = await fetch("/api/forest");
+  if (!res.ok) throw new Error("API /api/forest failed");
   return res.json();
 }
 
-function createChart(containerId) {
-  return LightweightCharts.createChart(document.getElementById(containerId), {
+function makeChart(el) {
+  return LightweightCharts.createChart(el, {
     layout: {
-      background: { color: '#0e1117' },
-      textColor: '#DDD'
+      background: { color: "#0e1117" },
+      textColor: "#d6d6d6"
     },
     grid: {
-      vertLines: { color: '#222' },
-      horzLines: { color: '#222' }
+      vertLines: { color: "#222" },
+      horzLines: { color: "#222" }
     },
-    timeScale: { borderColor: '#222' },
-    rightPriceScale: { borderColor: '#222' }
+    timeScale: { borderColor: "#222" },
+    rightPriceScale: { borderColor: "#222" },
+    crosshair: { mode: 1 }
   });
 }
 
 async function init() {
   const data = await loadData();
 
-  // ====== Price chart ======
-  const chart = createChart("chart");
-  const candleSeries = chart.addCandlestickSeries();
-  candleSeries.setData(data.candles);
+  // ===== Price chart =====
+  const priceChart = makeChart(document.getElementById("priceChart"));
+  const candles = priceChart.addCandlestickSeries();
+  candles.setData(data.candles);
 
-  // markers (allemaal tegelijk zetten)
+  // Markers (turning points)
   const markers = (data.turningPoints || []).map(tp => ({
     time: tp.time,
     position: tp.type === "up" ? "belowBar" : "aboveBar",
-    color: tp.type === "up" ? "green" : "red",
+    color: tp.type === "up" ? "#00c853" : "#ff5252",
     shape: tp.type === "up" ? "arrowUp" : "arrowDown",
-    text: tp.type === "up" ? "UP" : "DOWN"
+    text: tp.type === "up" ? "BIAS UP" : "BIAS DOWN"
   }));
-  candleSeries.setMarkers(markers);
+  candles.setMarkers(markers);
 
-  // ====== Forest chart ======
-  const forestChart = createChart("forest");
-  const forestSeries = forestChart.addLineSeries({
-    color: '#00ff88',
+  // ===== Forest chart (bias mountain) =====
+  const forestChart = makeChart(document.getElementById("forestChart"));
+
+  // Baseline 0-lijn (zodat je “boven/onder 0” ziet)
+  const zeroLine = forestChart.addLineSeries({ lineWidth: 1 });
+  zeroLine.setData(data.candles.map(c => ({ time: c.time, value: 0 })));
+
+  // Forest lijn
+  const forestLine = forestChart.addLineSeries({
+    color: "#00ff88",
     lineWidth: 2
   });
 
   const forestData = data.candles.map((c, i) => ({
     time: c.time,
-    value: data.forest[i] ?? 0
+    value: (data.forest[i] ?? 0)
   }));
-  forestSeries.setData(forestData);
+  forestLine.setData(forestData);
 
-  // sync time scales (nice TV-feel)
-  chart.timeScale().subscribeVisibleTimeRangeChange(range => {
-    forestChart.timeScale().setVisibleRange(range);
+  // Sync zoom/scroll (TradingView feel)
+  priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
+    if (range) forestChart.timeScale().setVisibleRange(range);
   });
 }
 
-init();
+init().catch(err => {
+  console.error(err);
+  document.body.innerHTML = `<pre style="color:#ff6666;padding:16px;">${err}</pre>`;
+});
