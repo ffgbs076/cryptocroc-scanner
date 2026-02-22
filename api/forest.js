@@ -31,12 +31,8 @@ function sma(values, period) {
 
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
-    if (v == null) {
-      q.push(null);
-    } else {
-      q.push(v);
-      sum += v;
-    }
+    q.push(v);
+    if (v != null) sum += v;
 
     if (q.length > period) {
       const old = q.shift();
@@ -44,10 +40,13 @@ function sma(values, period) {
     }
 
     if (q.length === period) {
-      // alleen geldig als we echt period geldige punten hebben
-      let count = 0;
-      for (let j = 0; j < q.length; j++) if (q[j] != null) count++;
-      out[i] = count === period ? sum / period : null;
+      for (let j = 0; j < q.length; j++) {
+        if (q[j] == null) {
+          out[i] = null;
+          break;
+        }
+      }
+      if (out[i] !== null) out[i] = sum / period;
     }
   }
   return out;
@@ -166,44 +165,37 @@ export default async function handler(req, res) {
     const candles = await fetchKrakenWeeklyCandles();
     const closes = candles.map(c => c.close);
 
-    // ===== MA (lang) =====
     const maPeriod = closes.length >= 220 ? 200 : 100;
     const ma = sma(closes, maPeriod);
 
-    // ===== RSI =====
     const rsi14 = rsi(closes, 14);
 
-    // ===== Bollinger (20w, 2std) =====
+    // Bollinger (20w, 2std)
     const bbMA = sma(closes, 20);
     const bbSTD = rollingStd(closes, 20);
     const upper = bbMA.map((m, i) => (m == null || bbSTD[i] == null) ? null : (m + 2 * bbSTD[i]));
     const lower = bbMA.map((m, i) => (m == null || bbSTD[i] == null) ? null : (m - 2 * bbSTD[i]));
 
-    // ===== Trend dist + dynamische schaal (P90 abs over 156w) =====
+    // Trend distance + dynamische schaal (P90 abs over 156w)
     const dist = closes.map((c, i) => (ma[i] == null ? null : (c / ma[i] - 1)));
     const distScaleRaw = rollingPctlAbs(dist, 156, 0.9);
-    const distScale = distScaleRaw.map(s => (s == null ? null : Math.max(0.05, s))); // min schaal = 5%
+    const distScale = distScaleRaw.map(s => (s == null ? null : Math.max(0.05, s)));
 
-    // ===== Cycle = ROC8 - ROC16, schaal = 2*std over 156w =====
+    // Cycle = ROC8 - ROC16, schaal = 2*std over 156w
     const roc8 = roc(closes, 8);
     const roc16 = roc(closes, 16);
     const cycleRaw = closes.map((_, i) =>
       (roc8[i] == null || roc16[i] == null) ? null : (roc8[i] - roc16[i])
     );
     const cycleStd = rollingStd(cycleRaw, 156);
-    const cycleScale = cycleStd.map(s => (s == null ? null : Math.max(0.02, 2 * s))); // min schaal
+    const cycleScale = cycleStd.map(s => (s == null ? null : Math.max(0.02, 2 * s)));
 
-    // ===== Forest raw =====
     const forestRaw = closes.map((price, i) => {
       if (ma[i] == null || rsi14[i] == null || dist[i] == null || distScale[i] == null) return null;
 
-      // trend continuous
       const trendScore = clamp(dist[i] / distScale[i], -1, 1);
-
-      // momentum continuous
       const momentumScore = clamp((rsi14[i] - 50) / 50, -1, 1);
 
-      // revert: buiten BBands volgens duidelijke formule
       let revertScore = 0;
       if (upper[i] != null && lower[i] != null && bbMA[i] != null) {
         if (price > upper[i]) {
@@ -215,13 +207,12 @@ export default async function handler(req, res) {
         }
       }
 
-      // cycle normalized
       let cycleScore = 0;
       if (cycleRaw[i] != null && cycleScale[i] != null) {
         cycleScore = clamp(cycleRaw[i] / cycleScale[i], -1, 1);
       }
 
-      // weights (V2.2)
+      // Gewichten (MVP, bewust simpel)
       const wTrend = 0.40;
       const wMom   = 0.25;
       const wRev   = 0.25;
@@ -230,24 +221,18 @@ export default async function handler(req, res) {
       return (wTrend * trendScore) + (wMom * momentumScore) + (wRev * revertScore) + (wCyc * cycleScore);
     });
 
-    // ===== Smooth forest =====
     const forest = ema(forestRaw, 6);
 
-    // ===== Turning points: dynamische threshold op basis van forest-vol =====
-    // We gebruiken 52w rolling std op forest (na smoothing)
+    // Turning points: dynamische threshold op basis van forest-vol
     const forestStd52 = rollingStd(forest, 52);
-
     const turningPoints = [];
     for (let i = 1; i < forest.length; i++) {
       const prev = forest[i - 1];
       const curr = forest[i];
       const std = forestStd52[i];
-
       if (prev == null || curr == null || std == null) continue;
 
-      // drempel: minimaal 0.12, anders 0.8 * std
       const TH = Math.max(0.12, 0.8 * std);
-
       if (prev < -TH && curr > +TH) turningPoints.push({ time: candles[i].time, type: "up" });
       if (prev > +TH && curr < -TH) turningPoints.push({ time: candles[i].time, type: "down" });
     }
@@ -257,7 +242,7 @@ export default async function handler(req, res) {
       interval: "1w",
       maPeriod,
       candles,
-      forest,          // bevat nulls in het begin (correct!)
+      forest,
       turningPoints
     });
   } catch (err) {
