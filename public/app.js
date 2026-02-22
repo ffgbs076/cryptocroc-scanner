@@ -1,128 +1,96 @@
-function $(id){ return document.getElementById(id); }
-
-function setPill(text, kind){
-  const pill = $("statusPill");
-  pill.textContent = text;
-  pill.style.color = "var(--text)";
-  if (kind === "good") pill.style.color = "var(--good)";
-  if (kind === "bad")  pill.style.color = "var(--bad)";
-  if (kind === "mid")  pill.style.color = "var(--mid)";
+async function loadData() {
+  const res = await fetch("/api/forest", { headers: { accept: "application/json" } });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "API /api/forest failed");
+  return JSON.parse(text);
 }
 
-function lastNonNull(arr){
-  for (let i = arr.length - 1; i >= 0; i--){
-    if (arr[i] != null) return { i, v: arr[i] };
-  }
-  return { i: -1, v: null };
-}
-
-function safeText(id, text){
-  const el = $(id);
-  if (el) el.textContent = text;
-}
-
-async function main(){
-  setPill("Loading…", "mid");
-
-  const r = await fetch("/api/forest", { headers: { "accept": "application/json" } });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j?.error || "API error");
-
-  const candles = Array.isArray(j.candles) ? j.candles : [];
-  const forest  = Array.isArray(j.forest)  ? j.forest  : [];
-  const turningPoints = Array.isArray(j.turningPoints) ? j.turningPoints : [];
-
-  safeText("meta", `Source: ${j.source} • TF: ${j.interval} • MA: ${j.maPeriod}`);
-  safeText("debug", JSON.stringify({
-    candles: candles.length,
-    forestLen: forest.length,
-    turningPoints: turningPoints.length
-  }, null, 2));
-
-  if (!candles.length) throw new Error("No candle data received");
-
-  // ---------------------------
-  // PRICE CHART (candles)
-  // ---------------------------
-  const priceEl = $("priceChart");
-  if (!priceEl) throw new Error("Missing #priceChart element");
-
-  const priceChart = LightweightCharts.createChart(priceEl, {
-    width: priceEl.clientWidth,
-    height: priceEl.clientHeight,
-    layout: { background: { color: "transparent" }, textColor: "#e7eefc" },
-    grid: {
-      vertLines: { color: "rgba(255,255,255,0.06)" },
-      horzLines: { color: "rgba(255,255,255,0.06)" }
+function makeChart(el) {
+  return LightweightCharts.createChart(el, {
+    layout: {
+      background: { color: "#0e1117" },
+      textColor: "#d6d6d6"
     },
-    rightPriceScale: { borderColor: "rgba(255,255,255,0.10)" },
-    timeScale: { borderColor: "rgba(255,255,255,0.10)" }
+    grid: {
+      vertLines: { color: "#222" },
+      horzLines: { color: "#222" }
+    },
+    timeScale: { borderColor: "#222" },
+    rightPriceScale: { borderColor: "#222" },
+    crosshair: { mode: 1 }
   });
+}
 
-  // ✅ Lightweight Charts v5: addSeries(...) i.p.v. addCandlestickSeries()
-  const candleSeries = priceChart.addSeries(LightweightCharts.CandlestickSeries, {});
-  candleSeries.setData(candles);
+function safeSetMarkers(series, markers) {
+  try {
+    // v4: series.setMarkers bestaat
+    if (typeof series.setMarkers === "function") {
+      series.setMarkers(markers);
+      return true;
+    }
+    // v5: sommige builds hebben createSeriesMarkers
+    if (typeof LightweightCharts.createSeriesMarkers === "function") {
+      LightweightCharts.createSeriesMarkers(series, markers);
+      return true;
+    }
+  } catch (e) {
+    console.warn("Markers not supported:", e);
+  }
+  return false;
+}
 
-  // Markers (turning points)
-  const markers = turningPoints
+async function init() {
+  const data = await loadData();
+
+  const priceEl = document.getElementById("priceChart");
+  const forestEl = document.getElementById("forestChart");
+  if (!priceEl) throw new Error("Missing #priceChart");
+  if (!forestEl) throw new Error("Missing #forestChart");
+
+  // --------------------
+  // PRICE (candles)
+  // --------------------
+  const priceChart = makeChart(priceEl);
+
+  // ✅ v5: addSeries(CandlestickSeries)
+  const candlesSeries = priceChart.addSeries(LightweightCharts.CandlestickSeries, {});
+  candlesSeries.setData(data.candles);
+
+  const markers = (data.turningPoints || [])
     .filter(tp => tp && tp.time && (tp.type === "up" || tp.type === "down"))
     .map(tp => ({
       time: tp.time,
       position: tp.type === "up" ? "belowBar" : "aboveBar",
       shape: tp.type === "up" ? "arrowUp" : "arrowDown",
-      text: tp.type === "up" ? "UP" : "DOWN"
+      text: tp.type === "up" ? "BIAS UP" : "BIAS DOWN"
     }));
 
-  // v5 markers: meestal bestaat createSeriesMarkers, maar niet in elke build.
-  // Daarom: veilig proberen, anders markers skippen (geen crash).
-  try {
-    if (markers.length && typeof LightweightCharts.createSeriesMarkers === "function") {
-      LightweightCharts.createSeriesMarkers(candleSeries, markers);
-    } else if (markers.length && typeof candleSeries.setMarkers === "function") {
-      // fallback (sommige builds hebben setMarkers)
-      candleSeries.setMarkers(markers);
-    }
-  } catch (e) {
-    console.warn("Markers not supported in this LightweightCharts build:", e);
-  }
+  if (markers.length) safeSetMarkers(candlesSeries, markers);
 
-  priceChart.timeScale().fitContent();
+  // --------------------
+  // FOREST (line)
+  // --------------------
+  const forestChart = makeChart(forestEl);
 
-  // ---------------------------
-  // FOREST CHART (line)
-  // ---------------------------
-  const forestEl = $("forestChart");
-  if (!forestEl) throw new Error("Missing #forestChart element");
+  // ✅ v5: addSeries(LineSeries)
+  const zeroLine = forestChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 1 });
+  zeroLine.setData((data.candles || []).map(c => ({ time: c.time, value: 0 })));
 
-  const forestChart = LightweightCharts.createChart(forestEl, {
-    width: forestEl.clientWidth,
-    height: forestEl.clientHeight,
-    layout: { background: { color: "transparent" }, textColor: "#e7eefc" },
-    grid: {
-      vertLines: { color: "rgba(255,255,255,0.06)" },
-      horzLines: { color: "rgba(255,255,255,0.06)" }
-    },
-    rightPriceScale: { borderColor: "rgba(255,255,255,0.10)" },
-    timeScale: { borderColor: "rgba(255,255,255,0.10)" }
+  const forestLine = forestChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 2 });
+  const forestData = (data.candles || []).map((c, i) => {
+    const v = (data.forest && data.forest[i] != null) ? Number(data.forest[i]) : null;
+    return v == null ? null : ({ time: c.time, value: v });
+  }).filter(Boolean);
+
+  forestLine.setData(forestData);
+
+  // Sync zoom/scroll
+  priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
+    if (range) forestChart.timeScale().setVisibleRange(range);
   });
 
-  const forestSeries = forestChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 2 });
-
-  const forestLine = candles
-    .map((c, i) => {
-      const v = forest[i];
-      return (v == null) ? null : ({ time: c.time, value: Number(v) });
-    })
-    .filter(Boolean);
-
-  forestSeries.setData(forestLine);
+  priceChart.timeScale().fitContent();
   forestChart.timeScale().fitContent();
-
-  const last = lastNonNull(forest);
-  if (last.v == null) setPill("Forest: not enough data yet", "mid");
-  else if (last.v > 0.12) setPill(`Forest: Bullish (${Number(last.v).toFixed(2)})`, "good");
-  else if (last.v < -0.12) setPill(`Forest: Bearish (${Number(last.v).toFixed(2)})`, "bad");
-  else setPill(`Forest: Neutral (${Number(last.v).toFixed(2)})`, "mid");
 
   // Resize
   window.addEventListener("resize", () => {
@@ -131,8 +99,7 @@ async function main(){
   });
 }
 
-main().catch(err => {
+init().catch(err => {
   console.error(err);
-  setPill("Error (check debug)", "bad");
-  safeText("debug", String(err?.message || err));
+  document.body.innerHTML = `<pre style="color:#ff6666;padding:16px;white-space:pre-wrap;">${String(err?.message || err)}</pre>`;
 });
