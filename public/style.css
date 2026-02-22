@@ -1,37 +1,87 @@
 :root{
-  --bg:#0e1117;
-  --grid:#222;
-  --text:#d6d6d6;
+  --bg:#0b1220;
+  --panel:#0f1a2e;
+  --border:#1b2a45;
+  --text:#e7eefc;
+  --muted:#9fb2d7;
+  --good:#27d19c;
+  --bad:#ff5c7a;
+  --mid:#ffd166;
 }
 
-html,body{
-  height:100%;
+*{box-sizing:border-box}
+body{
   margin:0;
   background:var(--bg);
   color:var(--text);
-  font-family:Arial, sans-serif;
-}
-
-.wrap{
-  max-width:1200px;
-  margin:0 auto;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
 }
 
 .topbar{
-  padding:14px 14px 8px 14px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:14px 16px;
+  border-bottom:1px solid var(--border);
+  background:rgba(10,18,34,.9);
+  position:sticky;
+  top:0;
+  z-index:5;
+  backdrop-filter: blur(8px);
 }
 
-.title{
-  font-size:18px;
+.brand{display:flex;gap:10px;align-items:center}
+.dot{
+  width:12px;height:12px;border-radius:999px;
+  background:linear-gradient(180deg,#2ee6b8,#1c7cff);
+}
+.title{font-weight:800;letter-spacing:.2px}
+.sub{color:var(--muted);font-size:12px;margin-top:2px}
+
+.status{display:flex;align-items:center;gap:10px}
+.pill{
+  padding:6px 10px;border-radius:999px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.04);
   font-weight:700;
-}
-
-.subtitle{
   font-size:12px;
-  opacity:0.75;
-  margin-top:4px;
+}
+.meta{color:var(--muted);font-size:12px}
+
+.wrap{
+  max-width:1100px;
+  margin:0 auto;
+  padding:16px;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
 }
 
-.chart{ width:100%; }
-.chart.price{ height:62vh; }
-.chart.forest{ height:28vh; margin-top:8px; }
+.panel{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:14px;
+  overflow:hidden;
+}
+
+.panelHeader{
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  padding:12px 14px;
+  border-bottom:1px solid var(--border);
+}
+.panelHeader h2{margin:0;font-size:14px;letter-spacing:.2px}
+.hint{color:var(--muted);font-size:12px}
+
+.chart{width:100%;height:520px}
+.chart.small{height:260px}
+
+.debug{
+  margin:0;
+  padding:12px 14px;
+  color:var(--muted);
+  font-size:12px;
+  overflow:auto;
+  max-height:240px;
+}
