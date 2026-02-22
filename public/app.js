@@ -1,7 +1,8 @@
 async function loadData() {
   const res = await fetch("/api/forest");
-  if (!res.ok) throw new Error("API /api/forest failed");
-  return res.json();
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "API /api/forest failed");
+  return JSON.parse(text);
 }
 
 function makeChart(el) {
@@ -47,13 +48,10 @@ async function init() {
   });
 
   forestLine.setData(
-    data.candles.map((c, i) => ({
-      time: c.time,
-      value: data.forest[i] ?? 0
-    }))
+    data.candles.map((c, i) => ({ time: c.time, value: data.forest[i] ?? 0 }))
   );
 
-  // Sync time range
+  // Sync zoom/scroll
   priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
     if (range) forestChart.timeScale().setVisibleRange(range);
   });
