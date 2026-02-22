@@ -1,0 +1,13 @@
+body {
+  margin: 0;
+  background: #0e1117;
+  font-family: Arial, sans-serif;
+}
+
+#chart {
+  height: 60vh;
+}
+
+#forest {
+  height: 30vh;
+}
