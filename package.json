@@ -2,7 +2,7 @@
   "name": "cryptocroc-forest-tv",
   "private": true,
   "version": "1.0.0",
-  "description": "BTC weekly candles + Forest line (TradingView style) on Vercel",
+  "type": "module",
   "engines": {
     "node": "20.x"
   },
