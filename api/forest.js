@@ -67,25 +67,24 @@ function rsi(closes, period = 14) {
   return out;
 }
 
-async function fetchCoinbaseWeeklyCandles(weeks = 300) {
-  // Coinbase API: /products/BTC-USD/candles?granularity=604800
-  // Max ~300 candles per call is ok.
-  const now = new Date();
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
-  const start = new Date(end.getTime() - weeks * 7 * 24 * 60 * 60 * 1000);
+async function fetchCoinbaseWeeklyCandles() {
+  // Geen start/end -> Coinbase geeft “meest recente candles” terug (max ~300)
+  const url =
+    "https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=604800";
 
-  const url = new URL("https://api.exchange.coinbase.com/products/BTC-USD/candles");
-  url.searchParams.set("granularity", "604800");
-  url.searchParams.set("start", start.toISOString());
-  url.searchParams.set("end", end.toISOString());
-
-  const r = await fetchFn(url.toString(), {
+  const r = await fetchFn(url, {
     headers: { "User-Agent": "btc-forest-tv" }
   });
+
   if (!r.ok) throw new Error(`Coinbase error: ${r.status}`);
 
   const arr = await r.json();
-  // Coinbase returns: [ time, low, high, open, close, volume ] (descending)
+
+  if (!Array.isArray(arr) || arr.length === 0) {
+    throw new Error("Coinbase returned empty candles");
+  }
+
+  // Coinbase format: [ time, low, high, open, close, volume ] (DESC)
   const candles = arr
     .map(d => ({
       time: Number(d[0]), // seconds
@@ -101,24 +100,23 @@ async function fetchCoinbaseWeeklyCandles(weeks = 300) {
 
 export default async function handler(req, res) {
   try {
-    const candles = await fetchCoinbaseWeeklyCandles(300);
+    const candles = await fetchCoinbaseWeeklyCandles();
     const closes = candles.map(c => c.close);
 
+    // MA200 kan met ~300 candles, oké
     const ma200 = sma(closes, 200);
     const rsi14 = rsi(closes, 14);
 
-    // Forest “bias” = berglandschap: stijgdruk/daldruk, GEEN prijs-target
+    // Forest “bias”: stijgdruk/daldruk (geen prijs-target)
     const biasRaw = closes.map((price, i) => {
       if (ma200[i] == null || rsi14[i] == null) return 0;
 
       const trend = price > ma200[i] ? 1 : -1;
       const momentum = rsi14[i] >= 50 ? 1 : -1;
 
-      // mean reversion: ver boven MA -> afkoelen, ver onder -> rebound
       const distance = price / ma200[i] - 1;
       const revert = -clamp(distance * 4, -1, 1);
 
-      // mix
       return trend * 0.5 + momentum * 0.3 + revert * 0.2;
     });
 
