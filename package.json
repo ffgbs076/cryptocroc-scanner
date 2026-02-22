@@ -6,7 +6,6 @@
     "node": "20.x"
   },
   "scripts": {
-    "build": "echo \"No build step needed\"",
-    "dev": "node -e \"console.log('Dev: use Vercel dev if you want')\""
+    "build": "echo \"No build step needed\""
   }
 }
