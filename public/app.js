@@ -1,95 +1,128 @@
-async function loadData() {
+function $(id){ return document.getElementById(id); }
+
+function setPill(text, kind){
+  const pill = $("statusPill");
+  pill.textContent = text;
+  pill.style.color = "var(--text)";
+  if (kind === "good") pill.style.color = "var(--good)";
+  if (kind === "bad") pill.style.color = "var(--bad)";
+  if (kind === "mid") pill.style.color = "var(--mid)";
+}
+
+function lastNonNull(arr){
+  for (let i = arr.length - 1; i >= 0; i--){
+    if (arr[i] != null) return { i, v: arr[i] };
+  }
+  return { i: -1, v: null };
+}
+
+async function loadData(){
   const res = await fetch("/api/forest", { headers: { accept: "application/json" } });
   const text = await res.text();
   if (!res.ok) throw new Error(text || "API /api/forest failed");
   return JSON.parse(text);
 }
 
-function makeChart(el) {
+// markers helper (faalt netjes als build het niet ondersteunt)
+function trySetMarkers(series, markers){
+  try {
+    if (typeof series.setMarkers === "function") {
+      series.setMarkers(markers);
+      return true;
+    }
+    if (typeof LightweightCharts.createSeriesMarkers === "function") {
+      LightweightCharts.createSeriesMarkers(series, markers);
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+function makeChart(el){
   return LightweightCharts.createChart(el, {
-    layout: {
-      background: { color: "#0e1117" },
-      textColor: "#d6d6d6"
-    },
+    width: el.clientWidth,
+    height: el.clientHeight,
+    layout: { background: { color: "transparent" }, textColor: "#d6d6d6" },
     grid: {
-      vertLines: { color: "#222" },
-      horzLines: { color: "#222" }
+      vertLines: { color: "rgba(255,255,255,0.08)" },
+      horzLines: { color: "rgba(255,255,255,0.08)" }
     },
-    timeScale: { borderColor: "#222" },
-    rightPriceScale: { borderColor: "#222" },
+    timeScale: { borderColor: "rgba(255,255,255,0.12)" },
+    rightPriceScale: { borderColor: "rgba(255,255,255,0.12)" },
     crosshair: { mode: 1 }
   });
 }
 
-// markers: werkt op v4, en faalt netjes op v5 builds die het anders doen
-function trySetMarkers(series, markers) {
-  try {
-    if (typeof series.setMarkers === "function") {
-      series.setMarkers(markers);
-      return;
-    }
-    if (typeof LightweightCharts.createSeriesMarkers === "function") {
-      LightweightCharts.createSeriesMarkers(series, markers);
-      return;
-    }
-  } catch (e) {}
-}
+async function init(){
+  setPill("Loading…", "mid");
 
-async function init() {
+  if (!window.LightweightCharts) {
+    throw new Error("LightweightCharts not loaded. Check the script tag in index.html.");
+  }
+
   const data = await loadData();
 
-  const priceEl = document.getElementById("priceChart");
-  const forestEl = document.getElementById("forestChart");
-  if (!priceEl) throw new Error("Missing #priceChart");
-  if (!forestEl) throw new Error("Missing #forestChart");
+  const candles = data.candles || [];
+  const forest = data.forest || [];
+  const turningPoints = data.turningPoints || [];
 
-  // --------------------
-  // PRICE CHART
-  // --------------------
+  $("meta").textContent = `Source: ${data.source} • TF: ${data.interval} • MA: ${data.maPeriod}`;
+
+  $("debug").textContent = JSON.stringify({
+    candles: candles.length,
+    forestLen: forest.length,
+    turningPoints: turningPoints.length,
+    version: data.version || "unknown"
+  }, null, 2);
+
+  // PRICE
+  const priceEl = $("priceChart");
   const priceChart = makeChart(priceEl);
 
-  // ✅ v5:
   const candleSeries = priceChart.addSeries(LightweightCharts.CandlestickSeries, {});
-  candleSeries.setData(data.candles || []);
+  candleSeries.setData(candles);
 
-  const markers = (data.turningPoints || []).map(tp => ({
+  const markers = turningPoints.map(tp => ({
     time: tp.time,
     position: tp.type === "up" ? "belowBar" : "aboveBar",
     shape: tp.type === "up" ? "arrowUp" : "arrowDown",
     text: tp.type === "up" ? "BIAS UP" : "BIAS DOWN"
   }));
-
   if (markers.length) trySetMarkers(candleSeries, markers);
 
-  // --------------------
-  // FOREST CHART
-  // --------------------
+  priceChart.timeScale().fitContent();
+
+  // FOREST
+  const forestEl = $("forestChart");
   const forestChart = makeChart(forestEl);
 
-  // ✅ v5:
   const zeroLine = forestChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 1 });
-  zeroLine.setData((data.candles || []).map(c => ({ time: c.time, value: 0 })));
+  zeroLine.setData(candles.map(c => ({ time: c.time, value: 0 })));
 
   const forestSeries = forestChart.addSeries(LightweightCharts.LineSeries, { lineWidth: 2 });
-
-  const forestLine = (data.candles || [])
+  const forestLine = candles
     .map((c, i) => {
-      const v = data.forest?.[i];
-      return v == null ? null : { time: c.time, value: Number(v) };
+      const v = forest[i];
+      return v == null ? null : ({ time: c.time, value: Number(v) });
     })
     .filter(Boolean);
 
   forestSeries.setData(forestLine);
+  forestChart.timeScale().fitContent();
 
-  // Sync zoom/scroll
+  // status
+  const last = lastNonNull(forest);
+  if (last.v == null) setPill("Forest: not enough data yet", "mid");
+  else if (last.v > 0.12) setPill(`Forest: Bullish (${last.v.toFixed(2)})`, "good");
+  else if (last.v < -0.12) setPill(`Forest: Bearish (${last.v.toFixed(2)})`, "bad");
+  else setPill(`Forest: Neutral (${last.v.toFixed(2)})`, "mid");
+
+  // sync zoom
   priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
     if (range) forestChart.timeScale().setVisibleRange(range);
   });
 
-  priceChart.timeScale().fitContent();
-  forestChart.timeScale().fitContent();
-
-  // Resize
+  // resize
   window.addEventListener("resize", () => {
     priceChart.applyOptions({ width: priceEl.clientWidth, height: priceEl.clientHeight });
     forestChart.applyOptions({ width: forestEl.clientWidth, height: forestEl.clientHeight });
@@ -98,7 +131,6 @@ async function init() {
 
 init().catch(err => {
   console.error(err);
-  document.body.innerHTML = `<pre style="color:#ff6666;padding:16px;white-space:pre-wrap;">${String(
-    err?.message || err
-  )}</pre>`;
+  setPill("Error (check debug)", "bad");
+  $("debug").textContent = String(err?.message || err);
 });
