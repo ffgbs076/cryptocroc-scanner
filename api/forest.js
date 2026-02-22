@@ -9,8 +9,8 @@ function clamp(x, min, max) {
 function ema(values, period) {
   const k = 2 / (period + 1);
   const out = new Array(values.length).fill(null);
-
   let prev = null;
+
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
     if (v == null) continue;
@@ -24,20 +24,15 @@ function ema(values, period) {
 function sma(values, period) {
   const out = new Array(values.length).fill(null);
   let sum = 0;
-  let count = 0;
   const q = [];
 
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
     q.push(v);
     sum += v;
-    count++;
 
-    if (count > period) {
-      sum -= q.shift();
-      count--;
-    }
-    if (count === period) out[i] = sum / period;
+    if (q.length > period) sum -= q.shift();
+    if (q.length === period) out[i] = sum / period;
   }
   return out;
 }
@@ -46,7 +41,6 @@ function rsi(closes, period = 14) {
   const out = new Array(closes.length).fill(null);
   if (closes.length < period + 1) return out;
 
-  // Wilder RSI (EMA-like smoothing)
   let gain = 0;
   let loss = 0;
 
@@ -77,8 +71,8 @@ function rsi(closes, period = 14) {
 
 export default async function handler(req, res) {
   try {
-    // Weekly BTC candles (no key)
-    const url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1w&limit=400";
+    const url =
+      "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1w&limit=400";
     const r = await fetchFn(url);
     if (!r.ok) throw new Error(`Binance error: ${r.status}`);
 
@@ -94,33 +88,24 @@ export default async function handler(req, res) {
 
     const closes = candles.map(c => c.close);
 
-    // Core indicators
     const ma200 = sma(closes, 200);
     const rsi14 = rsi(closes, 14);
 
-    // Forest “bias” = richtingdruk (trend + momentum) + mean reversion (terugtrek)
-    // Dit is expres GEEN “prijs target”, maar “kans op stijg/dal fases”.
+    // Forest “bias”: stijgdruk / daaldruk (geen prijs-target)
     const biasRaw = closes.map((price, i) => {
       if (ma200[i] == null || rsi14[i] == null) return 0;
 
-      // Trend druk
       const trend = price > ma200[i] ? 1 : -1;
-
-      // Momentum druk
       const momentum = rsi14[i] >= 50 ? 1 : -1;
 
-      // Mean reversion: ver boven MA => afkoel kans, ver onder => rebound kans
-      const distance = price / ma200[i] - 1;          // bv. +0.20 = 20% boven MA
-      const revert = -clamp(distance * 4, -1, 1);     // schaal 4 = “hoe snel terugtrekken”
+      const distance = price / ma200[i] - 1;
+      const revert = -clamp(distance * 4, -1, 1);
 
-      // Mix (som = 1.0)
       return trend * 0.5 + momentum * 0.3 + revert * 0.2;
     });
 
-    // Smooth zodat het “TradingView clean” wordt
     const forest = ema(biasRaw, 6).map(v => (v == null ? 0 : v));
 
-    // Turning points: waar bias door 0 kruist
     const turningPoints = [];
     for (let i = 1; i < forest.length; i++) {
       const a = forest[i - 1];
@@ -130,11 +115,7 @@ export default async function handler(req, res) {
     }
 
     res.setHeader("Content-Type", "application/json");
-    res.status(200).json({
-      candles,
-      forest,          // -1..+1 (ongeveer), “mountain/bias”
-      turningPoints
-    });
+    res.status(200).json({ candles, forest, turningPoints });
   } catch (err) {
     res.status(500).json({ error: String(err?.message || err) });
   }
