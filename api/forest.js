@@ -34,6 +34,33 @@ function sma(values, period) {
   return out;
 }
 
+function stddev(values, period) {
+  const out = new Array(values.length).fill(null);
+  const q = [];
+  let sum = 0;
+  let sumsq = 0;
+
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    q.push(v);
+    sum += v;
+    sumsq += v * v;
+
+    if (q.length > period) {
+      const old = q.shift();
+      sum -= old;
+      sumsq -= old * old;
+    }
+
+    if (q.length === period) {
+      const mean = sum / period;
+      const varr = Math.max(0, sumsq / period - mean * mean);
+      out[i] = Math.sqrt(varr);
+    }
+  }
+  return out;
+}
+
 function rsi(closes, period = 14) {
   const out = new Array(closes.length).fill(null);
   if (closes.length < period + 1) return out;
@@ -44,9 +71,9 @@ function rsi(closes, period = 14) {
     if (diff >= 0) gain += diff;
     else loss -= diff;
   }
+
   gain /= period;
   loss /= period;
-
   out[period] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
 
   for (let i = period + 1; i < closes.length; i++) {
@@ -77,7 +104,7 @@ async function fetchKrakenWeeklyCandles() {
   if (!key) throw new Error("Kraken: missing OHLC result");
 
   const rows = result[key];
-  const candles = rows
+  return rows
     .map(row => ({
       time: Number(row[0]),
       open: Number(row[1]),
@@ -86,8 +113,31 @@ async function fetchKrakenWeeklyCandles() {
       close: Number(row[4])
     }))
     .sort((a, b) => a.time - b.time);
+}
 
-  return candles;
+function roc(closes, period) {
+  const out = new Array(closes.length).fill(null);
+  for (let i = period; i < closes.length; i++) {
+    out[i] = (closes[i] / closes[i - period]) - 1;
+  }
+  return out;
+}
+
+// rolling P90 van abs(x)
+function rollingPctlAbs(values, period, p = 0.9) {
+  const out = new Array(values.length).fill(null);
+  const q = [];
+  for (let i = 0; i < values.length; i++) {
+    q.push(Math.abs(values[i]));
+    if (q.length > period) q.shift();
+
+    if (q.length === period) {
+      const sorted = [...q].sort((a, b) => a - b);
+      const idx = Math.floor((sorted.length - 1) * p);
+      out[i] = sorted[idx];
+    }
+  }
+  return out;
 }
 
 export default async function handler(req, res) {
@@ -95,34 +145,76 @@ export default async function handler(req, res) {
     const candles = await fetchKrakenWeeklyCandles();
     const closes = candles.map(c => c.close);
 
-    // ✅ fallback: MA200 als het kan, anders MA100
+    // ===== inputs =====
     const maPeriod = closes.length >= 220 ? 200 : 100;
     const ma = sma(closes, maPeriod);
     const rsi14 = rsi(closes, 14);
 
-    const biasRaw = closes.map((price, i) => {
-      if (ma[i] == null || rsi14[i] == null) return 0;
+    // Bollinger (20w, 2std)
+    const bbMA = sma(closes, 20);
+    const bbSTD = stddev(closes, 20);
+    const upper = bbMA.map((m, i) => (m == null || bbSTD[i] == null) ? null : (m + 2 * bbSTD[i]));
+    const lower = bbMA.map((m, i) => (m == null || bbSTD[i] == null) ? null : (m - 2 * bbSTD[i]));
 
-      const trend = price > ma[i] ? 1 : -1;
-      const momentum = rsi14[i] >= 50 ? 1 : -1;
+    // Trend scale = rolling P90 abs(dist) over 3 jaar (156w)
+    const dist = closes.map((c, i) => (ma[i] == null ? 0 : (c / ma[i] - 1)));
+    const distScale = rollingPctlAbs(dist, 156, 0.9).map(s => (s == null ? null : Math.max(0.05, s)));
 
-      const distance = price / ma[i] - 1;
-      const revert = -clamp(distance * 4, -1, 1);
+    // Cycle = ROC8 - ROC16, scaled by 2*std over 156w
+    const roc8 = roc(closes, 8);
+    const roc16 = roc(closes, 16);
+    const cycleRaw = closes.map((_, i) => (roc8[i] == null || roc16[i] == null) ? null : (roc8[i] - roc16[i]));
+    const cycleStd = stddev(cycleRaw.map(v => v ?? 0), 156).map(s => (s == null ? null : Math.max(0.01, s)));
+    const cycleScale = cycleStd.map(s => (s == null ? null : 2 * s));
 
-      // bias tussen ongeveer -1 en +1
-      return trend * 0.5 + momentum * 0.3 + revert * 0.2;
+    // ===== scores =====
+    const forestRaw = closes.map((price, i) => {
+      if (ma[i] == null || rsi14[i] == null || distScale[i] == null) return 0;
+
+      // trend (continuous)
+      const trendScore = clamp(dist[i] / distScale[i], -1, 1);
+
+      // momentum (continuous)
+      const momentumScore = clamp((rsi14[i] - 50) / 50, -1, 1);
+
+      // revert (outside BB only)
+      let revertScore = 0;
+      if (upper[i] != null && lower[i] != null && bbMA[i] != null) {
+        if (price > upper[i]) {
+          const denom = Math.max(1e-9, (upper[i] - bbMA[i]));
+          revertScore = -clamp((price - upper[i]) / denom, 0, 1);
+        } else if (price < lower[i]) {
+          const denom = Math.max(1e-9, (bbMA[i] - lower[i]));
+          revertScore = clamp((lower[i] - price) / denom, 0, 1);
+        }
+      }
+
+      // cycle (normalized)
+      let cycleScore = 0;
+      if (cycleRaw[i] != null && cycleScale[i] != null) {
+        cycleScore = clamp(cycleRaw[i] / cycleScale[i], -1, 1);
+      }
+
+      // weights (V2.1)
+      const wTrend = 0.40;
+      const wMom = 0.25;
+      const wRev = 0.25;
+      const wCyc = 0.10;
+
+      return (wTrend * trendScore) + (wMom * momentumScore) + (wRev * revertScore) + (wCyc * cycleScore);
     });
 
-    // smooth
-    const forest = ema(biasRaw, 6).map(v => (v == null ? 0 : v));
+    // smoothing (keep fixed for now)
+    const forest = ema(forestRaw, 6).map(v => (v == null ? 0 : v));
 
-    // turning points (kruist 0)
+    // turning points with hysteresis
+    const TH = 0.20;
     const turningPoints = [];
     for (let i = 1; i < forest.length; i++) {
       const a = forest[i - 1];
       const b = forest[i];
-      if (a <= 0 && b > 0) turningPoints.push({ time: candles[i].time, type: "up" });
-      if (a >= 0 && b < 0) turningPoints.push({ time: candles[i].time, type: "down" });
+      if (a < -TH && b > +TH) turningPoints.push({ time: candles[i].time, type: "up" });
+      if (a > +TH && b < -TH) turningPoints.push({ time: candles[i].time, type: "down" });
     }
 
     res.status(200).json({
