@@ -3,34 +3,52 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Forest</title>
+  <title>Forest BTC (Weekly)</title>
   <style>
-    :root { --bg:#0e1117; --fg:#d6d6d6; --muted:#8892a6; --good:#00c853; --bad:#ff5252; --mid:#f5c542; }
-    body { margin:0; background:var(--bg); color:var(--fg); font-family: -apple-system, system-ui, Segoe UI, Roboto, Arial; }
-    .top { display:flex; gap:12px; align-items:center; padding:12px 14px; border-bottom:1px solid #222; }
-    .pill { font-weight:700; }
-    .meta { color:var(--muted); font-size:12px; }
-    .wrap { display:grid; grid-template-rows: 56vh 28vh 1fr; gap:10px; padding:10px; }
-    .panel { border:1px solid #222; border-radius:10px; overflow:hidden; }
-    #priceChart, #forestChart { width:100%; height:100%; }
-    pre { margin:0; padding:10px; color:#ff7777; overflow:auto; }
+    body{ margin:0; background:#0b0f14; color:#d6d6d6; font-family: -apple-system,system-ui,Segoe UI,Roboto,Arial; }
+    .wrap{ max-width:1100px; margin:0 auto; padding:16px; }
+    .row{ display:flex; gap:12px; flex-wrap:wrap; }
+    .card{ background:#0e1117; border:1px solid #1f2a37; border-radius:12px; padding:12px; }
+    #priceChart{ width:100%; height:420px; }
+    #forestChart{ width:100%; height:220px; }
+    .top{ display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    .pill{ font-weight:700; }
+    pre{ white-space:pre-wrap; word-break:break-word; }
+    a{ color:#9cc3ff; }
   </style>
 </head>
 <body>
-  <div class="top">
-    <div id="statusPill" class="pill">Loading…</div>
-    <div id="probText" class="meta"></div>
-    <div id="meta" class="meta"></div>
-  </div>
-
   <div class="wrap">
-    <div class="panel"><div id="priceChart"></div></div>
-    <div class="panel"><div id="forestChart"></div></div>
-    <div class="panel"><pre id="debug"></pre></div>
+    <div class="top">
+      <div>
+        <div style="font-size:18px;font-weight:800;">Forest BTC (Weekly)</div>
+        <div id="meta" style="opacity:.8;font-size:13px;">Loading…</div>
+      </div>
+      <div>
+        <span class="pill" id="statusPill">…</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="priceChart"></div>
+    </div>
+
+    <div style="height:12px;"></div>
+
+    <div class="card">
+      <div id="forestChart"></div>
+    </div>
+
+    <div style="height:12px;"></div>
+
+    <div class="card">
+      <div style="font-weight:700;margin-bottom:6px;">Debug</div>
+      <pre id="debug"></pre>
+    </div>
   </div>
 
-  <!-- Belangrijk: deze build geeft createChart + addCandlestickSeries + addLineSeries -->
-  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="/app.js"></script>
+  <!-- PIN v4: anders bestaat addCandlestickSeries niet -->
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script defer src="/app.js"></script>
 </body>
 </html>
