@@ -33,7 +33,6 @@ async function init(){
   const el = $("priceChart");
   const chart = makeChart(el);
 
-  // Candles
   const candleSeries = chart.addCandlestickSeries();
   candleSeries.setData(data.candles);
 
@@ -42,36 +41,30 @@ async function init(){
     lineWidth: 2,
     priceLineVisible: false
   });
-  forestTruth.setData(data.forestOverlayTruth || []);
+  forestTruth.setData(data.forestOverlayTruth);
 
-  // Forest overlay (LIVE PREVIEW) — DASHED
+  // Live preview — dashed
   const forestLive = chart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
-  if (Array.isArray(data.forestOverlayLive) && data.forestOverlayLive.length){
+  if (data.forestOverlayLive && data.forestOverlayLive.length){
     forestLive.setData(data.forestOverlayLive);
-  } else {
-    forestLive.setData([]); // leeg houden
   }
 
-  // Forward forecast — DASHED + thinner (hint)
+  // Forward hint — thinner dashed
   const forestFwd = chart.addLineSeries({
     lineWidth: 1,
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
-  if (Array.isArray(data.forestOverlayForward) && data.forestOverlayForward.length){
+  if (data.forestOverlayForward && data.forestOverlayForward.length){
     forestFwd.setData(data.forestOverlayForward);
-  } else {
-    forestFwd.setData([]);
   }
 
-  // Pas nu fitContent toe (dan pakt hij ook forward mee)
   chart.timeScale().fitContent();
-
-  setPill(data.regimeLabel || "Forest");
+  setPill(data.regimeLabel);
 
   window.addEventListener("resize", () => {
     chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
