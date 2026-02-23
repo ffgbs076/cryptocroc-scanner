@@ -1,39 +1,32 @@
+<!-- public/index.html -->
 <!doctype html>
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Forest (BTC Weekly)</title>
+  <title>CryptoCroc Forest</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header class="top">
-    <div class="title">Forest line (bias) — BTC Weekly</div>
-    <div id="status" class="status">Loading…</div>
-  </header>
-
-  <section class="meta">
-    <div id="metaText">—</div>
-    <pre id="debug" class="debug">—</pre>
-  </section>
-
-  <main class="grid">
-    <section class="panel">
-      <div class="panelTitle">Price</div>
-      <div id="priceChart" class="chart"></div>
-    </section>
-
-    <section class="panel">
-      <div class="panelTitle">Forest</div>
-      <div id="forestChart" class="chart small"></div>
-      <div class="legend">
-        <span>0 = neutral</span>
-        <span id="thrText">—</span>
+  <div class="wrap">
+    <div class="row">
+      <div class="card">
+        <div class="cardTitle">Price</div>
+        <div id="priceChart" class="chart"></div>
       </div>
-    </section>
-  </main>
+    </div>
 
-  <!-- V4 (heeft addCandlestickSeries / addLineSeries) -->
+    <div class="row">
+      <div class="card">
+        <div class="cardTitle">Forest (z-score)</div>
+        <div id="forestChart" class="chart"></div>
+      </div>
+    </div>
+
+    <pre id="debug" class="debug"></pre>
+  </div>
+
+  <!-- Belangrijk: UMD build (global LightweightCharts) -->
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/app.js"></script>
 </body>
