@@ -1,107 +1,127 @@
 // api/_lib/indicators.js
-export function sma(values, len) {
-  const out = Array(values.length).fill(null);
-  let sum = 0;
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
-    if (v == null) { out[i] = null; continue; }
-    sum += v;
-    if (i >= len) sum -= values[i - len] ?? 0;
-    if (i >= len - 1) out[i] = sum / len;
-  }
-  return out;
-}
+// Kleine indicator helpers zonder dependencies.
 
-export function ema(values, len) {
-  const out = Array(values.length).fill(null);
-  const k = 2 / (len + 1);
+export function ema(values, length) {
+  const out = new Array(values.length).fill(null);
+  if (!length || length < 1) return out;
+
+  const k = 2 / (length + 1);
   let prev = null;
 
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
-    if (v == null) { out[i] = null; continue; }
-    if (prev == null) prev = v;
-    else prev = (v - prev) * k + prev;
-    out[i] = prev;
-  }
-  return out;
-}
+    if (v == null) continue;
 
-export function stdev(values, len) {
-  const out = Array(values.length).fill(null);
-  for (let i = 0; i < values.length; i++) {
-    if (i < len - 1) { out[i] = null; continue; }
-    let n = 0, s = 0, ss = 0;
-    for (let j = i - len + 1; j <= i; j++) {
-      const v = values[j];
-      if (v == null) continue;
-      n++;
-      s += v;
-      ss += v * v;
-    }
-    if (n < Math.max(5, Math.floor(len * 0.8))) { out[i] = null; continue; }
-    const mean = s / n;
-    const varr = Math.max(0, ss / n - mean * mean);
-    out[i] = Math.sqrt(varr);
-  }
-  return out;
-}
-
-export function atr(candles, len) {
-  const tr = Array(candles.length).fill(null);
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
-    if (!c) { tr[i] = null; continue; }
-    if (i === 0) {
-      tr[i] = c.high - c.low;
+    if (prev == null) {
+      // seed met SMA zodra genoeg data is
+      if (i < length - 1) continue;
+      let sum = 0;
+      let ok = true;
+      for (let j = i - (length - 1); j <= i; j++) {
+        if (values[j] == null) { ok = false; break; }
+        sum += values[j];
+      }
+      if (!ok) continue;
+      prev = sum / length;
+      out[i] = prev;
     } else {
-      const p = candles[i - 1];
-      const a = c.high - c.low;
-      const b = Math.abs(c.high - p.close);
-      const d = Math.abs(c.low - p.close);
-      tr[i] = Math.max(a, b, d);
+      prev = v * k + prev * (1 - k);
+      out[i] = prev;
     }
   }
-  return ema(tr, len);
+  return out;
 }
 
-// ADX (klassiek, voor trendstrength filter)
-export function adx(candles, len = 14) {
-  const plusDM = Array(candles.length).fill(null);
-  const minusDM = Array(candles.length).fill(null);
-  const tr = Array(candles.length).fill(null);
+export function sma(values, length) {
+  const out = new Array(values.length).fill(null);
+  if (!length || length < 1) return out;
 
-  for (let i = 1; i < candles.length; i++) {
-    const c = candles[i], p = candles[i - 1];
-    const upMove = c.high - p.high;
-    const downMove = p.low - c.low;
-
-    plusDM[i] = (upMove > downMove && upMove > 0) ? upMove : 0;
-    minusDM[i] = (downMove > upMove && downMove > 0) ? downMove : 0;
-
-    const a = c.high - c.low;
-    const b = Math.abs(c.high - p.close);
-    const d = Math.abs(c.low - p.close);
-    tr[i] = Math.max(a, b, d);
+  for (let i = 0; i < values.length; i++) {
+    if (i < length - 1) continue;
+    let sum = 0;
+    let ok = true;
+    for (let j = i - (length - 1); j <= i; j++) {
+      const v = values[j];
+      if (v == null) { ok = false; break; }
+      sum += v;
+    }
+    if (!ok) continue;
+    out[i] = sum / length;
   }
+  return out;
+}
 
-  const atrE = ema(tr, len);
-  const plusE = ema(plusDM, len);
-  const minusE = ema(minusDM, len);
+export function stdev(sample) {
+  // sample is array of numbers (no null)
+  const n = sample.length;
+  if (n < 2) return null;
+  let mean = 0;
+  for (const x of sample) mean += x;
+  mean /= n;
 
-  const plusDI = Array(candles.length).fill(null);
-  const minusDI = Array(candles.length).fill(null);
-  const dx = Array(candles.length).fill(null);
+  let v = 0;
+  for (const x of sample) {
+    const d = x - mean;
+    v += d * d;
+  }
+  v /= (n - 1); // sample variance
+  return Math.sqrt(v);
+}
 
+export function percentile(sample, p) {
+  // p in [0..1], sample array numbers (no null)
+  if (!sample.length) return null;
+  const arr = sample.slice().sort((a, b) => a - b);
+  const idx = (arr.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return arr[lo];
+  const w = idx - lo;
+  return arr[lo] * (1 - w) + arr[hi] * w;
+}
+
+export function trueRange(cPrev, cNow) {
+  const h = cNow.high;
+  const l = cNow.low;
+  const pc = cPrev?.close;
+  if (pc == null) return h - l;
+  return Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+}
+
+export function atr(candles, length) {
+  const out = new Array(candles.length).fill(null);
+  if (!length || length < 1) return out;
+
+  const tr = new Array(candles.length).fill(null);
   for (let i = 0; i < candles.length; i++) {
-    const a = atrE[i];
-    if (!a || a === 0) continue;
-    plusDI[i] = 100 * (plusE[i] / a);
-    minusDI[i] = 100 * (minusE[i] / a);
-    const sum = (plusDI[i] + minusDI[i]) || 0;
-    if (sum === 0) continue;
-    dx[i] = 100 * (Math.abs(plusDI[i] - minusDI[i]) / sum);
+    if (i === 0) tr[i] = candles[i].high - candles[i].low;
+    else tr[i] = trueRange(candles[i - 1], candles[i]);
   }
 
-  return ema(dx, len);
+  // Wilder ATR (RMA)
+  let prev = null;
+  for (let i = 0; i < candles.length; i++) {
+    if (tr[i] == null) continue;
+
+    if (prev == null) {
+      if (i < length) continue;
+      let sum = 0;
+      let ok = true;
+      for (let j = i - length + 1; j <= i; j++) {
+        if (tr[j] == null) { ok = false; break; }
+        sum += tr[j];
+      }
+      if (!ok) continue;
+      prev = sum / length;
+      out[i] = prev;
+    } else {
+      prev = (prev * (length - 1) + tr[i]) / length;
+      out[i] = prev;
+    }
+  }
+  return out;
+}
+
+export function clamp(x, lo, hi) {
+  return Math.max(lo, Math.min(hi, x));
 }
