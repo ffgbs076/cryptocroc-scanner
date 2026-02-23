@@ -1,92 +1,85 @@
-export function ema(values, period) {
+export function ema(values, length) {
   const out = new Array(values.length).fill(null);
-  if (!values.length || period <= 1) return out;
+  if (length <= 1) {
+    for (let i = 0; i < values.length; i++) out[i] = values[i];
+    return out;
+  }
 
-  const k = 2 / (period + 1);
+  const k = 2 / (length + 1);
   let prev = null;
 
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
-    if (v == null) continue;
-
-    if (prev == null) {
-      prev = v;
-      out[i] = v;
-    } else {
-      prev = v * k + prev * (1 - k);
-      out[i] = prev;
+    if (v == null) {
+      out[i] = null;
+      continue;
     }
+    if (prev == null) prev = v;
+    else prev = v * k + prev * (1 - k);
+    out[i] = prev;
   }
   return out;
 }
 
-export function std(values, window) {
+export function std(values, length) {
   const out = new Array(values.length).fill(null);
-  if (window <= 1) return out;
 
   for (let i = 0; i < values.length; i++) {
-    const start = i - window + 1;
-    if (start < 0) continue;
+    if (i < length - 1) continue;
 
-    let n = 0;
     let sum = 0;
-    for (let j = start; j <= i; j++) {
+    let sum2 = 0;
+    let n = 0;
+
+    for (let j = i - length + 1; j <= i; j++) {
       const v = values[j];
       if (v == null) continue;
       n++;
       sum += v;
+      sum2 += v * v;
     }
-    if (n < Math.max(10, Math.floor(window * 0.6))) continue;
+    if (n < Math.max(10, Math.floor(length * 0.6))) continue;
 
     const mean = sum / n;
-    let ss = 0;
-    for (let j = start; j <= i; j++) {
-      const v = values[j];
-      if (v == null) continue;
-      const d = v - mean;
-      ss += d * d;
-    }
-    out[i] = Math.sqrt(ss / n);
+    const varr = sum2 / n - mean * mean;
+    out[i] = Math.sqrt(Math.max(0, varr));
   }
+
   return out;
 }
 
-export function atr(candles, period) {
-  const out = new Array(candles.length).fill(null);
-  if (period <= 1) return out;
+export function atr(highs, lows, closes, length = 14) {
+  const tr = new Array(closes.length).fill(null);
 
-  const tr = new Array(candles.length).fill(null);
-  for (let i = 0; i < candles.length; i++) {
-    const c = candles[i];
-    const prevClose = i > 0 ? candles[i - 1].close : c.close;
-    const a = c.high - c.low;
-    const b = Math.abs(c.high - prevClose);
-    const d = Math.abs(c.low - prevClose);
-    tr[i] = Math.max(a, b, d);
+  for (let i = 0; i < closes.length; i++) {
+    if (i === 0) {
+      tr[i] = highs[i] - lows[i];
+      continue;
+    }
+    const h = highs[i], l = lows[i], pc = closes[i - 1];
+    tr[i] = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
   }
 
-  // Wilder EMA
-  let prev = null;
-  for (let i = 0; i < tr.length; i++) {
-    const v = tr[i];
+  // ATR = EMA(TR, length)
+  const atrArr = ema(tr, length);
+  return atrArr;
+}
+
+export function percentileFromWindow(values, endIndex, windowLen, p) {
+  // p: 0..1
+  const start = Math.max(0, endIndex - windowLen + 1);
+  const arr = [];
+  for (let i = start; i <= endIndex; i++) {
+    const v = values[i];
     if (v == null) continue;
-
-    if (prev == null) {
-      // seed: simpele average van eerste `period` als het kan
-      if (i < period - 1) continue;
-      let sum = 0;
-      for (let j = i - period + 1; j <= i; j++) sum += tr[j];
-      prev = sum / period;
-      out[i] = prev;
-    } else {
-      prev = (prev * (period - 1) + v) / period;
-      out[i] = prev;
-    }
+    arr.push(v);
   }
-
-  return out;
+  if (arr.length < Math.max(30, Math.floor(windowLen * 0.5))) return null;
+  arr.sort((a, b) => a - b);
+  const idx = Math.min(arr.length - 1, Math.max(0, Math.floor(p * (arr.length - 1))));
+  return arr[idx];
 }
 
-export function clamp(x, lo, hi) {
-  return Math.min(Math.max(x, lo), hi);
+export function clamp(x, a, b) {
+  return Math.min(b, Math.max(a, x));
 }
