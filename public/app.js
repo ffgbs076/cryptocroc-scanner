@@ -1,184 +1,121 @@
-// public/app.js
-function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+function $(id){ return document.getElementById(id); }
 
-function emaSeries(candles, len) {
-  const k = 2 / (len + 1);
-  let prev = null;
-  return candles.map(c => {
-    const v = c.close;
-    if (prev == null) prev = v;
-    else prev = v * k + prev * (1 - k);
-    return { time: c.time, value: prev };
-  });
+function setPill(text, kind){
+  const pill = $("statusPill");
+  pill.textContent = text;
+  pill.style.color = "var(--fg)";
+  if (kind === "good") pill.style.color = "var(--good)";
+  if (kind === "bad") pill.style.color = "var(--bad)";
+  if (kind === "mid") pill.style.color = "var(--mid)";
 }
 
 function makeChart(el) {
   return LightweightCharts.createChart(el, {
     width: el.clientWidth,
     height: el.clientHeight,
-    layout: { background: { color: "transparent" }, textColor: "#d6d6d6" },
-    grid: { vertLines: { color: "rgba(255,255,255,0.08)" }, horzLines: { color: "rgba(255,255,255,0.08)" } },
-    timeScale: { borderColor: "rgba(255,255,255,0.12)" },
-    rightPriceScale: { borderColor: "rgba(255,255,255,0.12)" },
+    layout: { background: { color: "#0e1117" }, textColor: "#d6d6d6" },
+    grid: { vertLines: { color: "#222" }, horzLines: { color: "#222" } },
+    timeScale: { borderColor: "#222" },
+    rightPriceScale: { borderColor: "#222" },
     crosshair: { mode: 1 }
   });
 }
 
-// Compat: werkt met v4 (addCandlestickSeries) en v5 (addSeries)
-function addCandles(chart) {
-  if (typeof chart.addCandlestickSeries === "function") return chart.addCandlestickSeries();
-  return chart.addSeries(LightweightCharts.CandlestickSeries, {});
-}
-function addLine(chart, opts) {
-  if (typeof chart.addLineSeries === "function") return chart.addLineSeries(opts || {});
-  return chart.addSeries(LightweightCharts.LineSeries, opts || {});
+async function getJson(url){
+  const r = await fetch(url, { headers:{ accept:"application/json" }});
+  const t = await r.text();
+  if (!r.ok) throw new Error(t || `HTTP ${r.status}`);
+  return JSON.parse(t);
 }
 
-async function loadData() {
-  const res = await fetch("/api/forest?interval=10080", { headers: { accept: "application/json" } }); // weekly
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || "API /api/forest failed");
-  return JSON.parse(text);
+function lastNonNullIndex(arr){
+  for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return i;
+  return -1;
 }
 
-function linRegSlope(values) {
-  // values: [{x,y}] -> slope
-  const n = values.length;
-  if (n < 2) return 0;
-  let sx=0, sy=0, sxx=0, sxy=0;
-  for (const p of values) { sx += p.x; sy += p.y; sxx += p.x*p.x; sxy += p.x*p.y; }
-  const denom = n*sxx - sx*sx;
-  if (denom === 0) return 0;
-  return (n*sxy - sx*sy) / denom;
-}
+async function main(){
+  setPill("Loading…", "mid");
 
-async function init() {
-  const data = await loadData();
+  // Truth = alleen gesloten week
+  const forest = await getJson("/api/forest?includeCurrentWeek=false&forecast=1");
+  // Preview = inclusief lopende week (mag verschillen)
+  const forestLive = await getJson("/api/forest?includeCurrentWeek=true&forecast=1");
+  // Kansmodel + structure gate (kan “no edge” geven)
+  const prob = await getJson("/api/probability?includeCurrentWeek=false");
 
-  const candles = data.candles || [];
-  const forestZ = data.forestZ || [];
-  const atr14 = data.atr14 || [];
+  $("meta").textContent = `Source: ${forest.source} • TF: ${forest.interval} • Forest: z-score`;
+  $("probText").textContent =
+    prob.isTradeable
+      ? `TRADEABLE: ${prob.direction.toUpperCase()} • pDown=${prob.pDown.toFixed(2)} • conf=${prob.confidence} • confluence=${prob.structure.relevantConfluence}`
+      : `NO EDGE • pDown=${prob.pDown.toFixed(2)} • conf=${prob.confidence} • confluence=${prob.structure.relevantConfluence}`;
 
-  document.getElementById("debug").textContent = JSON.stringify({
-    source: data.source,
-    interval: data.interval,
-    candles: candles.length,
-    forestZ: forestZ.filter(v => v != null).length
-  }, null, 2);
-
-  const priceEl = document.getElementById("priceChart");
-  const forestEl = document.getElementById("forestChart");
-
+  // PRICE CHART
+  const priceEl = $("priceChart");
   const priceChart = makeChart(priceEl);
-  const forestChart = makeChart(forestEl);
 
-  // --- PRICE CHART ---
-  const candleSeries = addCandles(priceChart);
-  candleSeries.setData(candles);
+  const candleSeries = priceChart.addCandlestickSeries();
+  candleSeries.setData(forest.candles);
 
-  // EMA overlays
-  const ema20 = emaSeries(candles, 20);
-  const ema50 = emaSeries(candles, 50);
+  // Forest overlay op prijs (altijd zichtbaar)
+  const overlayTruth = priceChart.addLineSeries({ lineWidth: 2 });
+  overlayTruth.setData(forest.overlayProjected || []);
 
-  const ema20Series = addLine(priceChart, { lineWidth: 2 });
-  ema20Series.setData(ema20);
+  // Live preview overlay (gestippeld)
+  const overlayLive = priceChart.addLineSeries({ lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
+  overlayLive.setData(forestLive.overlayProjected || []);
 
-  const ema50Series = addLine(priceChart, { lineWidth: 2 });
-  ema50Series.setData(ema50);
+  // Forecast (gestippeld vooruit, begrensd)
+  const overlayForecast = priceChart.addLineSeries({ lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
+  overlayForecast.setData(forest.forecastProjected || []);
 
-  // Forest -> price projection (begrensd)
-  const MULT = 1.2;      // jouw smaak: 1.0–1.6
-  const ZCAP = 2.5;      // hard cap op z-score
-
-  const proj = [];
-  for (let i = 0; i < candles.length; i++) {
-    const z = forestZ[i];
-    const a = atr14[i];
-    if (z == null || a == null) continue;
-    const base = ema20[i].value; // anker op EMA20
-    const cappedZ = clamp(z, -ZCAP, ZCAP);
-    const y = base + cappedZ * a * MULT;
-    proj.push({ time: candles[i].time, value: y });
-  }
-
-  const projSeries = addLine(priceChart, { lineWidth: 2 });
-  projSeries.setData(proj);
-
-  // --- Forecast (visueel) ---
-  // basis: laatste 6 punten van proj, lineaire slope, maar:
-  // - slope cap = ATR*0.5
-  // - demping bij extreme z
-  // - max 10 bars vooruit
-  const H = 10;
-  const N = 6;
-
-  const lastIdx = candles.length - 1;
-  const dt = (candles.length >= 2) ? (candles[lastIdx].time - candles[lastIdx - 1].time) : 7 * 24 * 3600;
-
-  const recent = proj.slice(-N);
-  if (recent.length >= 2) {
-    const pts = recent.map((p, k) => ({ x: k, y: p.value }));
-    let slope = linRegSlope(pts); // per bar
-
-    const lastAtr = atr14[lastIdx] ?? atr14[lastIdx - 1];
-    const lastZ = forestZ[lastIdx] ?? forestZ[lastIdx - 1];
-
-    if (lastAtr != null) {
-      const maxSlope = lastAtr * 0.5;
-      slope = clamp(slope, -maxSlope, maxSlope);
-    }
-
-    // demping: hoe extremer |z|, hoe minder extrapolatie
-    if (lastZ != null) {
-      const damp = 1 - clamp(Math.abs(lastZ) / 3, 0, 1); // |z|>=3 => 0
-      slope = slope * damp;
-    }
-
-    const start = recent[recent.length - 1];
-    const forecast = [];
-    for (let h = 1; h <= H; h++) {
-      forecast.push({
-        time: start.time + dt * h,
-        value: start.value + slope * h
-      });
-    }
-
-    const forecastSeries = addLine(priceChart, { lineWidth: 2, lineStyle: 2 }); // dotted
-    forecastSeries.setData([start, ...forecast]);
-  }
+  // Turning points markers op candles
+  const markers = (forest.turningPoints || []).map(tp => ({
+    time: tp.time,
+    position: tp.type === "up" ? "belowBar" : "aboveBar",
+    color: tp.type === "up" ? "#00c853" : "#ff5252",
+    shape: tp.type === "up" ? "arrowUp" : "arrowDown",
+    text: tp.type === "up" ? "UP" : "DOWN"
+  }));
+  candleSeries.setMarkers(markers);
 
   priceChart.timeScale().fitContent();
 
-  // --- FOREST CHART (PURE Z-SCORE) ---
-  const zero = addLine(forestChart, { lineWidth: 1, lineStyle: 2 });
-  zero.setData(candles.map(c => ({ time: c.time, value: 0 })));
+  // FOREST CHART (oscillator)
+  const forestEl = $("forestChart");
+  const forestChart = makeChart(forestEl);
 
-  const fSeries = addLine(forestChart, { lineWidth: 2 });
-  const forestLine = [];
-  for (let i = 0; i < candles.length; i++) {
-    const z = forestZ[i];
-    if (z == null) continue;
-    forestLine.push({ time: candles[i].time, value: z });
-  }
-  fSeries.setData(forestLine);
+  const zero = forestChart.addLineSeries({ lineWidth: 1 });
+  zero.setData(forest.candles.map(c => ({ time: c.time, value: 0 })));
 
-  // vaste schaal voor z-score (stabiel + eerlijk)
-  forestChart.priceScale("right").applyOptions({
-    autoScale: false,
-    scaleMargins: { top: 0.15, bottom: 0.15 }
-  });
-  // “fake fixed range” door invisible boundaries:
-  const capTop = addLine(forestChart, { lineWidth: 1, lineStyle: 3 });
-  const capBot = addLine(forestChart, { lineWidth: 1, lineStyle: 3 });
-  capTop.setData(candles.map(c => ({ time: c.time, value: 3 })));
-  capBot.setData(candles.map(c => ({ time: c.time, value: -3 })));
+  const forestTruth = forestChart.addLineSeries({ lineWidth: 2 });
+  forestTruth.setData(forest.forestLine || []);
+
+  const forestPreview = forestChart.addLineSeries({ lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
+  forestPreview.setData(forestLive.forestLine || []);
+
+  // vaste schaal -3..+3
+  forestChart.applyOptions({ rightPriceScale: { autoScale: false, scaleMargins: { top: 0.15, bottom: 0.15 } } });
+  forestTruth.applyOptions({ priceFormat: { type: "price", precision: 2, minMove: 0.01 } });
 
   forestChart.timeScale().fitContent();
 
-  // Sync scroll/zoom
-  priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
-    if (range) forestChart.timeScale().setVisibleRange(range);
-  });
+  // Status tekst op basis van laatste closed waarde
+  const idx = lastNonNullIndex(forest.forestRaw || []);
+  const z = idx >= 0 ? forest.forestRaw[idx] : null;
+
+  if (z == null) setPill("Forest: not enough data", "mid");
+  else if (z <= -0.35) setPill(`Forest: Bearish (${z.toFixed(2)})`, "bad");
+  else if (z >= 0.35) setPill(`Forest: Bullish (${z.toFixed(2)})`, "good");
+  else setPill(`Forest: Neutral (${z.toFixed(2)})`, "mid");
+
+  $("debug").textContent = JSON.stringify({
+    candles: forest.candles.length,
+    forestLinePoints: forest.forestLine?.length,
+    overlayTruth: forest.overlayProjected?.length,
+    overlayLive: forestLive.overlayProjected?.length,
+    forecast: forest.forecastProjected?.length,
+    probability: prob
+  }, null, 2);
 
   window.addEventListener("resize", () => {
     priceChart.applyOptions({ width: priceEl.clientWidth, height: priceEl.clientHeight });
@@ -186,7 +123,8 @@ async function init() {
   });
 }
 
-init().catch(err => {
+main().catch(err => {
   console.error(err);
-  document.body.innerHTML = `<pre style="color:#ff6666;padding:16px;white-space:pre-wrap;">${String(err?.message || err)}</pre>`;
+  setPill("Error (check debug)", "bad");
+  $("debug").textContent = String(err?.message || err);
 });
