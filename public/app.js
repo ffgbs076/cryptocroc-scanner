@@ -1,8 +1,7 @@
 function $(id){ return document.getElementById(id); }
 
 function setPill(text){
-  const pill = $("statusPill");
-  pill.textContent = text;
+  $("statusPill").textContent = text;
 }
 
 async function loadData(){
@@ -43,7 +42,7 @@ async function init(){
     lineWidth: 2,
     priceLineVisible: false
   });
-  forestTruth.setData(data.forestOverlayTruth);
+  forestTruth.setData(data.forestOverlayTruth || []);
 
   // Forest overlay (LIVE PREVIEW) — DASHED
   const forestLive = chart.addLineSeries({
@@ -51,23 +50,28 @@ async function init(){
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
-  if (data.forestOverlayLive && data.forestOverlayLive.length){
+  if (Array.isArray(data.forestOverlayLive) && data.forestOverlayLive.length){
     forestLive.setData(data.forestOverlayLive);
+  } else {
+    forestLive.setData([]); // leeg houden
   }
 
-  // Forward forecast — DASHED + thinner (always “hint”, never truth)
+  // Forward forecast — DASHED + thinner (hint)
   const forestFwd = chart.addLineSeries({
     lineWidth: 1,
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
-  if (data.forestOverlayForward && data.forestOverlayForward.length){
+  if (Array.isArray(data.forestOverlayForward) && data.forestOverlayForward.length){
     forestFwd.setData(data.forestOverlayForward);
+  } else {
+    forestFwd.setData([]);
   }
 
+  // Pas nu fitContent toe (dan pakt hij ook forward mee)
   chart.timeScale().fitContent();
 
-  setPill(data.regimeLabel);
+  setPill(data.regimeLabel || "Forest");
 
   window.addEventListener("resize", () => {
     chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
