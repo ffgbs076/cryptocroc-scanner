@@ -35,7 +35,6 @@ export default async function handler(req, res) {
         forestOverlayTruth: out.forestOverlayTruth,
         forestOverlayLive: out.forestOverlayLive,
         forestOverlayForward: out.forestOverlayForward,
-
         regimeLabel: out.regimeLabel,
       })
     );
