@@ -1,8 +1,6 @@
 {
-  "name": "forest-site",
+  "name": "forest",
   "private": true,
-  "type": "module",
-  "engines": {
-    "node": ">=20"
-  }
+  "version": "1.0.0",
+  "type": "module"
 }
