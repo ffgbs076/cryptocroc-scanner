@@ -1,12 +1,5 @@
 {
-  "name": "cryptocroc-forest",
+  "name": "forest",
   "private": true,
-  "version": "1.0.0",
-  "description": "BTC weekly candles + Forest line on Vercel",
-  "engines": {
-    "node": "20.x"
-  },
-  "scripts": {
-    "build": "echo \"no build needed\""
-  }
+  "type": "module"
 }
