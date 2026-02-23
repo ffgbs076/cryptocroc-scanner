@@ -6,7 +6,7 @@ function setPill(text) {
 
 async function loadData() {
   const res = await fetch("/api/forest?includeLive=1", {
-    headers: { accept: "application/json" }
+    headers: { accept: "application/json" },
   });
   const text = await res.text();
   if (!res.ok) throw new Error(text || "API failed");
@@ -21,7 +21,7 @@ function makeChart(el) {
     grid: { vertLines: { color: "#222" }, horzLines: { color: "#222" } },
     rightPriceScale: { borderColor: "#222" },
     timeScale: { borderColor: "#222", timeVisible: true, secondsVisible: false },
-    crosshair: { mode: 1 }
+    crosshair: { mode: 1 },
   });
 }
 
@@ -42,32 +42,32 @@ async function init() {
   // Forest overlay TRUTH (solid)
   const forestTruth = chart.addLineSeries({
     lineWidth: 2,
-    priceLineVisible: false
+    priceLineVisible: false,
   });
-  forestTruth.setData(data.forestOverlayTruth || []);
+  forestTruth.setData(data.forestOverlayTruth);
 
-  // Forest overlay LIVE (dashed hint)
+  // Forest overlay LIVE (dashed)
   const forestLive = chart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false,
-    lineStyle: LightweightCharts.LineStyle.Dashed
+    lineStyle: LightweightCharts.LineStyle.Dashed,
   });
   if (data.forestOverlayLive && data.forestOverlayLive.length) {
     forestLive.setData(data.forestOverlayLive);
   }
 
-  // Forward 4w (thin dashed hint)
+  // Forward hint (dashed thin)
   const forestFwd = chart.addLineSeries({
     lineWidth: 1,
     priceLineVisible: false,
-    lineStyle: LightweightCharts.LineStyle.Dashed
+    lineStyle: LightweightCharts.LineStyle.Dashed,
   });
   if (data.forestOverlayForward && data.forestOverlayForward.length) {
     forestFwd.setData(data.forestOverlayForward);
   }
 
   chart.timeScale().fitContent();
-  setPill(data.regimeLabel || "Forest");
+  setPill(data.regimeLabel);
 
   window.addEventListener("resize", () => {
     chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
@@ -77,5 +77,5 @@ async function init() {
 init().catch((err) => {
   console.error(err);
   document.body.innerHTML =
-    `<pre style="color:#ff6666;padding:12px;white-space:pre-wrap">${String(err?.message || err)}</pre>`;
+    `<pre style="color:#ff6666">${String(err?.message || err)}</pre>`;
 });
