@@ -5,14 +5,12 @@ function toNum(x) {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function getWeeklyBtcCandlesKraken() {
-  // Kraken: interval in minuten. Weekly = 10080
-  const url = `${KRAKEN_OHLC}?pair=XBTUSD&interval=10080`;
-
+async function fetchOhlc(pair, intervalMinutes) {
+  const url = `${KRAKEN_OHLC}?pair=${encodeURIComponent(pair)}&interval=${intervalMinutes}`;
   const r = await fetch(url, { headers: { accept: "application/json" } });
   if (!r.ok) throw new Error(`Kraken OHLC failed: HTTP ${r.status}`);
-  const j = await r.json();
 
+  const j = await r.json();
   if (j?.error?.length) throw new Error(`Kraken error: ${j.error.join(", ")}`);
 
   const key = Object.keys(j.result || {}).find((k) => k !== "last");
@@ -37,7 +35,16 @@ export async function getWeeklyBtcCandlesKraken() {
     .filter(Boolean)
     .sort((a, b) => a.time - b.time);
 
-  // Kraken geeft ook de lopende week candle mee. Die herkennen we zo:
+  return candles;
+}
+
+/**
+ * Weekly (1w) candles, met truth + live (lopende week)
+ */
+export async function getWeeklyBtcCandlesKraken() {
+  // Weekly = 10080 minutes
+  const candles = await fetchOhlc("XBTUSD", 10080);
+
   const now = Math.floor(Date.now() / 1000);
   const WEEK = 7 * 24 * 60 * 60;
 
@@ -49,4 +56,13 @@ export async function getWeeklyBtcCandlesKraken() {
   const candlesWithLive = candles.slice();
 
   return { candlesTruth, candlesWithLive, hasLive };
+}
+
+/**
+ * Daily (1d) candles (soms nodig door andere code). Geen truth/live split nodig.
+ */
+export async function getDailyBtcCandlesKraken() {
+  // Daily = 1440 minutes
+  const candles = await fetchOhlc("XBTUSD", 1440);
+  return candles;
 }
