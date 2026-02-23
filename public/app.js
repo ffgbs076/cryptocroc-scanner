@@ -1,170 +1,110 @@
-// public/app.js
-function $(id){ return document.getElementById(id); }
-
-function setStatus(text, kind){
-  const el = $("status");
-  el.textContent = text;
-  el.style.color = kind === "good" ? "var(--good)"
-               : kind === "bad"  ? "var(--bad)"
-               : kind === "mid"  ? "var(--mid)"
-               : "var(--text)";
-}
-
-async function loadData(){
-  const res = await fetch("/api/forest", { headers: { "accept":"application/json" } });
+async function loadData(tf) {
+  const res = await fetch(`/api/forest?tf=${encodeURIComponent(tf)}`);
   const text = await res.text();
-  if (!res.ok) throw new Error(text || "API /api/forest failed");
+  if (!res.ok) throw new Error(text || "API failed");
   return JSON.parse(text);
 }
 
-function makeChart(el){
+function makeChart(el) {
   return LightweightCharts.createChart(el, {
     layout: { background: { color: "transparent" }, textColor: "#d6d6d6" },
-    grid: {
-      vertLines: { color: "rgba(255,255,255,0.06)" },
-      horzLines: { color: "rgba(255,255,255,0.06)" }
-    },
-    timeScale: { borderColor: "rgba(255,255,255,0.10)" },
-    rightPriceScale: { borderColor: "rgba(255,255,255,0.10)" },
+    grid: { vertLines: { color: "#222" }, horzLines: { color: "#222" } },
+    timeScale: { borderColor: "#222" },
+    rightPriceScale: { borderColor: "#222" },
     crosshair: { mode: 1 }
   });
 }
 
-function toLineData(candles, arr){
-  const out = [];
-  for (let i = 0; i < candles.length; i++){
-    const v = arr?.[i];
-    if (v == null) continue;
-    out.push({ time: candles[i].time, value: v });
-  }
-  return out;
-}
+let priceChart, forestChart;
 
-function constLineData(candles, v){
-  return candles.map(c => ({ time: c.time, value: v }));
-}
+function clearEl(el){ while (el.firstChild) el.removeChild(el.firstChild); }
 
-function lastNonNull(arr){
-  for (let i = arr.length - 1; i >= 0; i--){
-    if (arr[i] != null) return { i, v: arr[i] };
-  }
-  return { i: -1, v: null };
-}
+async function render(tf){
+  const data = await loadData(tf);
 
-async function init(){
-  setStatus("Loading…", "mid");
-  const data = await loadData();
+  // reset
+  const priceEl = document.getElementById("priceChart");
+  const forestEl = document.getElementById("forestChart");
+  clearEl(priceEl); clearEl(forestEl);
 
-  const candles = data.candles || [];
-  const forest = data.forest || [];
-  const cycle = data.cycle || [];
-  const turningPoints = data.turningPoints || [];
-  const thr = data.thresholds || { turn: 0.2, zone: 0.35 };
+  priceChart = makeChart(priceEl);
+  forestChart = makeChart(forestEl);
 
-  $("metaText").textContent =
-    `Source: ${data.source} • ${data.symbol} • TF: ${data.interval} • Lookback: ${data.lookbackWeeks}w • Strength: ${data.strength}`;
+  // Candles
+  const candles = priceChart.addCandlestickSeries();
+  candles.setData(data.candles);
 
-  $("thrText").textContent = `turn ±${thr.turn} • zone ±${thr.zone}`;
+  // EMA’s
+  const ema20 = priceChart.addLineSeries({ lineWidth: 1 });
+  ema20.setData(data.ema20 || []);
 
-  $("debug").textContent = JSON.stringify({
-    candles: candles.length,
-    forestLen: forest.length,
-    turningPoints: turningPoints.length,
-    thresholds: thr,
-    strength: data.strength
-  }, null, 2);
+  const ema50 = priceChart.addLineSeries({ lineWidth: 1 });
+  ema50.setData(data.ema50 || []);
 
-  // PRICE CHART
-  const priceEl = $("priceChart");
-  const priceChart = makeChart(priceEl);
+  // Forest overlay (op prijs chart)
+  const forestOverlay = priceChart.addLineSeries({ lineWidth: 2 });
+  forestOverlay.setData(data.forestPriceLine || []);
 
-  const candleSeries = priceChart.addCandlestickSeries({
-    upColor: "#00c853",
-    downColor: "#ff5252",
-    borderVisible: false,
-    wickUpColor: "#00c853",
-    wickDownColor: "#ff5252"
-  });
+  // Forecast overlay (stippel)
+  // Lightweight Charts heeft lineStyle: 2 = dashed
+  const forecastOverlay = priceChart.addLineSeries({ lineWidth: 2, lineStyle: 2 });
+  forecastOverlay.setData(data.forecastLine || []);
 
-  candleSeries.setData(candles);
-
-  // EMA overlays
-  const ema20 = priceChart.addLineSeries({ lineWidth: 1, color: "rgba(255,255,255,0.45)" });
-  const ema50 = priceChart.addLineSeries({ lineWidth: 1, color: "rgba(255,255,255,0.30)" });
-  const ema200 = priceChart.addLineSeries({ lineWidth: 1, color: "rgba(255,255,255,0.18)" });
-
-  ema20.setData(toLineData(candles, data.overlays?.ema20));
-  ema50.setData(toLineData(candles, data.overlays?.ema50));
-  ema200.setData(toLineData(candles, data.overlays?.ema200));
-
-  // Markers on price
-  const priceMarkers = turningPoints.map(tp => ({
+  // Markers
+  const markers = (data.turningPoints || []).map(tp => ({
     time: tp.time,
     position: tp.type === "up" ? "belowBar" : "aboveBar",
-    color: tp.type === "up" ? "#00c853" : "#ff5252",
     shape: tp.type === "up" ? "arrowUp" : "arrowDown",
-    text: tp.type === "up" ? "BIAS UP" : "BIAS DOWN"
+    text: tp.type === "up" ? "UP" : "DOWN"
   }));
-  candleSeries.setMarkers(priceMarkers);
+  candles.setMarkers(markers);
 
   priceChart.timeScale().fitContent();
 
-  // FOREST CHART
-  const forestEl = $("forestChart");
-  const forestChart = makeChart(forestEl);
+  // Onderste paneel: puur voor “Forest Z gevoel” (optioneel)
+  // Hier tekenen we alleen de overlay-waarde minus EMA20 (zodat je beweging ziet).
+  const forestLine = forestChart.addLineSeries({ lineWidth: 2 });
+  const fl = (data.forestPriceLine || []).map((p, i) => {
+    const e = (data.ema20 || [])[i];
+    if (!p || !e) return null;
+    return { time: p.time, value: p.value - e.value };
+  }).filter(Boolean);
+  forestLine.setData(fl);
 
-  const zero = forestChart.addLineSeries({ lineWidth: 1, color: "rgba(255,255,255,0.18)" });
-  zero.setData(constLineData(candles, 0));
-
-  const zoneUp = forestChart.addLineSeries({ lineWidth: 1, color: "rgba(0,200,83,0.35)" });
-  const zoneDn = forestChart.addLineSeries({ lineWidth: 1, color: "rgba(255,82,82,0.35)" });
-  zoneUp.setData(constLineData(candles, thr.zone));
-  zoneDn.setData(constLineData(candles, -thr.zone));
-
-  const forestLine = forestChart.addLineSeries({ lineWidth: 2, color: "#3aa0ff" });
-  forestLine.setData(toLineData(candles, forest));
-
-  const cycleLine = forestChart.addLineSeries({ lineWidth: 1, color: "rgba(170, 120, 255, 0.9)" });
-  cycleLine.setData(toLineData(candles, cycle));
-
-  // Markers on forest
-  const forestMarkers = turningPoints.map(tp => ({
-    time: tp.time,
-    position: tp.type === "up" ? "belowBar" : "aboveBar",
-    color: tp.type === "up" ? "#00c853" : "#ff5252",
-    shape: "circle",
-    text: tp.type === "up" ? "UP" : "DOWN"
-  }));
-  forestLine.setMarkers(forestMarkers);
+  const zero = forestChart.addLineSeries({ lineWidth: 1, lineStyle: 2 });
+  zero.setData(fl.map(x => ({ time: x.time, value: 0 })));
 
   forestChart.timeScale().fitContent();
 
-  // Status label
-  const last = lastNonNull(forest);
-  if (last.v == null) {
-    setStatus("Forest: not enough data yet", "mid");
-  } else {
-    const v = last.v;
-    const s = data.strength || "unknown";
-    if (v >= thr.turn) setStatus(`Forest: Bullish (${v.toFixed(2)}) • ${s}`, s === "strong" ? "good" : "mid");
-    else if (v <= -thr.turn) setStatus(`Forest: Bearish (${v.toFixed(2)}) • ${s}`, s === "strong" ? "bad" : "mid");
-    else setStatus(`Forest: Neutral (${v.toFixed(2)}) • ${s}`, "mid");
-  }
-
-  // Sync zoom/scroll
+  // sync scroll/zoom
   priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
     if (range) forestChart.timeScale().setVisibleRange(range);
   });
 
-  // Resize
   window.addEventListener("resize", () => {
     priceChart.applyOptions({ width: priceEl.clientWidth, height: priceEl.clientHeight });
     forestChart.applyOptions({ width: forestEl.clientWidth, height: forestEl.clientHeight });
-  });
+  }, { once: true });
+
+  const meta = document.getElementById("meta");
+  if (meta) meta.textContent = `TF: ${data.tf} • candles: ${data.candles?.length || 0}`;
 }
 
-init().catch(err => {
-  console.error(err);
-  setStatus("Error (check debug)", "bad");
-  $("debug").textContent = String(err?.message || err);
-});
+function wireButtons(){
+  const w = document.getElementById("tfW");
+  const d = document.getElementById("tfD");
+  const m = document.getElementById("tf15");
+
+  const go = (tf) => render(tf).catch(err => {
+    console.error(err);
+    document.body.innerHTML = `<pre style="color:#ff6666;padding:16px;">${err}</pre>`;
+  });
+
+  if (w) w.onclick = () => go("1W");
+  if (d) d.onclick = () => go("1D");
+  if (m) m.onclick = () => go("15m");
+
+  go("1W"); // default
+}
+
+wireButtons();
