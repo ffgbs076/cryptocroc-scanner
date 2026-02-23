@@ -1,127 +1,57 @@
 // api/_lib/indicators.js
-// Kleine indicator helpers zonder dependencies.
+// ✅ Exports: ema, std, atr
 
 export function ema(values, length) {
   const out = new Array(values.length).fill(null);
-  if (!length || length < 1) return out;
-
+  if (length <= 1) {
+    for (let i = 0; i < values.length; i++) out[i] = values[i];
+    return out;
+  }
   const k = 2 / (length + 1);
-  let prev = null;
 
+  let prev = null;
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
     if (v == null) continue;
 
     if (prev == null) {
-      // seed met SMA zodra genoeg data is
-      if (i < length - 1) continue;
-      let sum = 0;
-      let ok = true;
-      for (let j = i - (length - 1); j <= i; j++) {
-        if (values[j] == null) { ok = false; break; }
-        sum += values[j];
-      }
-      if (!ok) continue;
-      prev = sum / length;
+      prev = v;
       out[i] = prev;
-    } else {
-      prev = v * k + prev * (1 - k);
-      out[i] = prev;
+      continue;
     }
+    prev = v * k + prev * (1 - k);
+    out[i] = prev;
   }
   return out;
 }
 
-export function sma(values, length) {
+export function std(values, length) {
   const out = new Array(values.length).fill(null);
-  if (!length || length < 1) return out;
-
   for (let i = 0; i < values.length; i++) {
     if (i < length - 1) continue;
-    let sum = 0;
-    let ok = true;
-    for (let j = i - (length - 1); j <= i; j++) {
+    let sum = 0, sum2 = 0, n = 0;
+    for (let j = i - length + 1; j <= i; j++) {
       const v = values[j];
-      if (v == null) { ok = false; break; }
-      sum += v;
+      if (v == null) continue;
+      sum += v; sum2 += v * v; n++;
     }
-    if (!ok) continue;
-    out[i] = sum / length;
+    if (n < Math.max(10, Math.floor(length * 0.6))) continue;
+    const mean = sum / n;
+    const varr = Math.max(0, (sum2 / n) - mean * mean);
+    out[i] = Math.sqrt(varr);
   }
   return out;
-}
-
-export function stdev(sample) {
-  // sample is array of numbers (no null)
-  const n = sample.length;
-  if (n < 2) return null;
-  let mean = 0;
-  for (const x of sample) mean += x;
-  mean /= n;
-
-  let v = 0;
-  for (const x of sample) {
-    const d = x - mean;
-    v += d * d;
-  }
-  v /= (n - 1); // sample variance
-  return Math.sqrt(v);
-}
-
-export function percentile(sample, p) {
-  // p in [0..1], sample array numbers (no null)
-  if (!sample.length) return null;
-  const arr = sample.slice().sort((a, b) => a - b);
-  const idx = (arr.length - 1) * p;
-  const lo = Math.floor(idx);
-  const hi = Math.ceil(idx);
-  if (lo === hi) return arr[lo];
-  const w = idx - lo;
-  return arr[lo] * (1 - w) + arr[hi] * w;
-}
-
-export function trueRange(cPrev, cNow) {
-  const h = cNow.high;
-  const l = cNow.low;
-  const pc = cPrev?.close;
-  if (pc == null) return h - l;
-  return Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
 }
 
 export function atr(candles, length) {
-  const out = new Array(candles.length).fill(null);
-  if (!length || length < 1) return out;
-
   const tr = new Array(candles.length).fill(null);
   for (let i = 0; i < candles.length; i++) {
-    if (i === 0) tr[i] = candles[i].high - candles[i].low;
-    else tr[i] = trueRange(candles[i - 1], candles[i]);
+    const c = candles[i];
+    const prevClose = i > 0 ? candles[i - 1].close : c.close;
+    const a = c.high - c.low;
+    const b = Math.abs(c.high - prevClose);
+    const d = Math.abs(c.low - prevClose);
+    tr[i] = Math.max(a, b, d);
   }
-
-  // Wilder ATR (RMA)
-  let prev = null;
-  for (let i = 0; i < candles.length; i++) {
-    if (tr[i] == null) continue;
-
-    if (prev == null) {
-      if (i < length) continue;
-      let sum = 0;
-      let ok = true;
-      for (let j = i - length + 1; j <= i; j++) {
-        if (tr[j] == null) { ok = false; break; }
-        sum += tr[j];
-      }
-      if (!ok) continue;
-      prev = sum / length;
-      out[i] = prev;
-    } else {
-      prev = (prev * (length - 1) + tr[i]) / length;
-      out[i] = prev;
-    }
-  }
-  return out;
-}
-
-export function clamp(x, lo, hi) {
-  return Math.max(lo, Math.min(hi, x));
+  return ema(tr, length);
 }
