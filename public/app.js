@@ -5,9 +5,7 @@ function setPill(text){
 }
 
 async function loadData(){
-  const res = await fetch("/api/forest?includeLive=1", {
-    headers: { accept: "application/json" }
-  });
+  const res = await fetch("/api/forest?includeLive=1", { headers: { "accept":"application/json" } });
   const text = await res.text();
   if (!res.ok) throw new Error(text || "API failed");
   return JSON.parse(text);
@@ -35,7 +33,6 @@ async function init(){
   const el = $("priceChart");
   const chart = makeChart(el);
 
-  // Candles
   const candleSeries = chart.addCandlestickSeries();
   candleSeries.setData(data.candles);
 
@@ -44,9 +41,9 @@ async function init(){
     lineWidth: 2,
     priceLineVisible: false
   });
-  forestTruth.setData(data.forestOverlayTruth || []);
+  forestTruth.setData(data.forestOverlayTruth);
 
-  // Forest overlay (LIVE PREVIEW) — DASHED
+  // Live preview — dashed
   const forestLive = chart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false,
@@ -56,21 +53,18 @@ async function init(){
     forestLive.setData(data.forestOverlayLive);
   }
 
-  // Forward 4w — DASHED + thinner (hint)
+  // Forward hint — thinner dashed
   const forestFwd = chart.addLineSeries({
     lineWidth: 1,
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
   if (data.forestOverlayForward && data.forestOverlayForward.length){
-    // Belangrijk: forward begint NA de laatste truth-time,
-    // dus we geven hem apart.
-    const lastTruth = (data.forestOverlayTruth || []).slice(-1);
-    forestFwd.setData([...(lastTruth || []), ...(data.forestOverlayForward || [])]);
+    forestFwd.setData(data.forestOverlayForward);
   }
 
   chart.timeScale().fitContent();
-  setPill(data.regimeLabel || "—");
+  setPill(data.regimeLabel);
 
   window.addEventListener("resize", () => {
     chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
