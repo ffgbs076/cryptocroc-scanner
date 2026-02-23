@@ -1,61 +1,52 @@
-const KRAKEN_BASE = "https://api.kraken.com/0/public/OHLC";
-const WEEK_INTERVAL_MIN = 10080; // 7 dagen
+const KRAKEN_OHLC = "https://api.kraken.com/0/public/OHLC";
 
 function toNum(x) {
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
 }
 
-function normalizeKrakenOhlc(row) {
-  // row: [ time, open, high, low, close, vwap, volume, count ]
-  const t = toNum(row[0]);
-  const o = toNum(row[1]);
-  const h = toNum(row[2]);
-  const l = toNum(row[3]);
-  const c = toNum(row[4]);
-  if (t == null || o == null || h == null || l == null || c == null) return null;
-  return { time: t, open: o, high: h, low: l, close: c };
-}
-
 export async function getWeeklyBtcCandlesKraken() {
-  // Kraken pair naming: XBTUSD is meestal goed
-  // (soms XXBTZUSD, maar XBTUSD werkt vaak in public endpoints)
-  const url = `${KRAKEN_BASE}?pair=XBTUSD&interval=${WEEK_INTERVAL_MIN}`;
+  // Kraken: interval in minuten. Weekly = 10080
+  const url = `${KRAKEN_OHLC}?pair=XBTUSD&interval=10080`;
 
-  const r = await fetch(url, {
-    headers: { accept: "application/json" },
-  });
+  const r = await fetch(url, { headers: { accept: "application/json" } });
+  if (!r.ok) throw new Error(`Kraken OHLC failed: HTTP ${r.status}`);
+  const j = await r.json();
 
-  if (!r.ok) {
-    const txt = await r.text().catch(() => "");
-    throw new Error(`Kraken OHLC failed: ${r.status} ${txt}`);
-  }
+  if (j?.error?.length) throw new Error(`Kraken error: ${j.error.join(", ")}`);
 
-  const json = await r.json();
-  if (json?.error?.length) throw new Error(`Kraken error: ${json.error.join(", ")}`);
+  const key = Object.keys(j.result || {}).find((k) => k !== "last");
+  if (!key) throw new Error("Kraken payload missing result pair key");
 
-  const resultObj = json?.result || {};
-  const pairKey = Object.keys(resultObj).find((k) => k !== "last");
-  const rows = pairKey ? resultObj[pairKey] : null;
-  if (!Array.isArray(rows) || rows.length < 50) {
-    throw new Error("Kraken returned not enough weekly data");
-  }
+  const rows = j.result[key];
+  if (!Array.isArray(rows) || rows.length < 10)
+    throw new Error("Kraken returned not enough rows");
 
-  const candlesAll = rows
-    .map(normalizeKrakenOhlc)
+  // row: [time, open, high, low, close, vwap, volume, count]
+  const candles = rows
+    .map((row) => {
+      const t = toNum(row[0]);
+      const o = toNum(row[1]);
+      const h = toNum(row[2]);
+      const l = toNum(row[3]);
+      const c = toNum(row[4]);
+      const v = toNum(row[6]);
+      if ([t, o, h, l, c].some((x) => x == null)) return null;
+      return { time: t, open: o, high: h, low: l, close: c, volume: v ?? 0 };
+    })
     .filter(Boolean)
     .sort((a, b) => a.time - b.time);
 
-  // Live candle detectie: laatste week is niet gesloten als "nu" nog binnen die week valt
+  // Kraken geeft ook de lopende week candle mee. Die herkennen we zo:
   const now = Math.floor(Date.now() / 1000);
-  const weekSec = WEEK_INTERVAL_MIN * 60;
+  const WEEK = 7 * 24 * 60 * 60;
 
-  const last = candlesAll[candlesAll.length - 1];
-  const lastCloseTime = last.time + weekSec;
-  const hasLive = lastCloseTime > now; // nog niet gesloten
+  const last = candles[candles.length - 1];
+  const lastEnd = last.time + WEEK;
+  const hasLive = now < lastEnd;
 
-  const candlesTruth = hasLive ? candlesAll.slice(0, -1) : candlesAll;
-  const candlesWithLive = candlesAll;
+  const candlesTruth = hasLive ? candles.slice(0, -1) : candles.slice();
+  const candlesWithLive = candles.slice();
 
   return { candlesTruth, candlesWithLive, hasLive };
 }
