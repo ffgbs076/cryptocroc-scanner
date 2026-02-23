@@ -1,8 +1,6 @@
 import { getWeeklyBtcCandlesKraken } from "./_lib/kraken.js";
 import { buildForestOverlay } from "./_lib/forestEngine.js";
 
-export const config = { runtime: "nodejs" };
-
 export default async function handler(req, res) {
   try {
     const includeLive = String(req.query?.includeLive || "0") === "1";
@@ -10,14 +8,13 @@ export default async function handler(req, res) {
     const { candlesTruth, candlesWithLive, hasLive } =
       await getWeeklyBtcCandlesKraken();
 
+    const baseCandles = includeLive ? candlesWithLive : candlesTruth;
+
     const out = buildForestOverlay({
       candlesTruth,
       candlesWithLive,
       hasLive,
-      forwardWeeks: 4, // jij wilde 4 weken vooruit
     });
-
-    const baseCandles = includeLive ? candlesWithLive : candlesTruth;
 
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.status(200).send(
@@ -35,13 +32,11 @@ export default async function handler(req, res) {
           close: c.close,
         })),
 
-        forestOverlayTruth: out.forestOverlayTruth,     // SOLID (truth)
-        forestOverlayLive: out.forestOverlayLive,       // DASHED (live preview)
-        forestOverlayForward: out.forestOverlayForward, // DASHED (4w hint)
+        forestOverlayTruth: out.forestOverlayTruth,
+        forestOverlayLive: out.forestOverlayLive,
+        forestOverlayForward: out.forestOverlayForward,
 
-        // extra info (handig)
         regimeLabel: out.regimeLabel,
-        forestZNow: out.forestZNow,
       })
     );
   } catch (e) {
