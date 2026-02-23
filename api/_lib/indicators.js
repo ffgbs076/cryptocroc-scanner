@@ -1,57 +1,46 @@
-export function sma(values, len) {
-  if (len <= 1) return values.slice();
+export function ema(values, period) {
   const out = new Array(values.length).fill(null);
-  let sum = 0;
-  let q = 0;
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
-    if (v == null) continue;
-    sum += v;
-    q++;
-    if (i >= len) {
-      const old = values[i - len];
-      if (old != null) {
-        sum -= old;
-        q--;
-      }
-    }
-    if (i >= len - 1 && q > 0) out[i] = sum / q;
-  }
-  return out;
-}
+  if (!values.length || period <= 1) return out;
 
-export function ema(values, len) {
-  const out = new Array(values.length).fill(null);
-  if (len <= 1) return values.map((v) => (v == null ? null : v));
-  const k = 2 / (len + 1);
-
+  const k = 2 / (period + 1);
   let prev = null;
+
   for (let i = 0; i < values.length; i++) {
     const v = values[i];
     if (v == null) continue;
-    prev = prev == null ? v : prev + k * (v - prev);
-    out[i] = prev;
+
+    if (prev == null) {
+      prev = v;
+      out[i] = v;
+    } else {
+      prev = v * k + prev * (1 - k);
+      out[i] = prev;
+    }
   }
   return out;
 }
 
-export function std(values, len) {
+export function std(values, window) {
   const out = new Array(values.length).fill(null);
-  if (len <= 1) return out;
+  if (window <= 1) return out;
+
   for (let i = 0; i < values.length; i++) {
-    if (i < len - 1) continue;
+    const start = i - window + 1;
+    if (start < 0) continue;
+
     let n = 0;
-    let s = 0;
-    for (let j = i - len + 1; j <= i; j++) {
+    let sum = 0;
+    for (let j = start; j <= i; j++) {
       const v = values[j];
       if (v == null) continue;
       n++;
-      s += v;
+      sum += v;
     }
-    if (n < Math.max(10, Math.floor(len * 0.6))) continue;
-    const mean = s / n;
+    if (n < Math.max(10, Math.floor(window * 0.6))) continue;
+
+    const mean = sum / n;
     let ss = 0;
-    for (let j = i - len + 1; j <= i; j++) {
+    for (let j = start; j <= i; j++) {
       const v = values[j];
       if (v == null) continue;
       const d = v - mean;
@@ -62,41 +51,39 @@ export function std(values, len) {
   return out;
 }
 
-export function atr(candles, len) {
+export function atr(candles, period) {
   const out = new Array(candles.length).fill(null);
-  let prevClose = null;
-  const tr = candles.map((c, i) => {
-    if (i === 0) return c.high - c.low;
-    const hl = c.high - c.low;
-    const hc = Math.abs(c.high - prevClose);
-    const lc = Math.abs(c.low - prevClose);
-    return Math.max(hl, hc, lc);
-  });
+  if (period <= 1) return out;
 
-  // EMA ATR
-  const trEma = ema(tr, len);
-  for (let i = 0; i < trEma.length; i++) out[i] = trEma[i];
-  for (let i = 0; i < candles.length; i++) prevClose = candles[i].close;
-
-  return out;
-}
-
-export function percentile(values, len, p01) {
-  // p01: 0..1
-  const out = new Array(values.length).fill(null);
-  for (let i = 0; i < values.length; i++) {
-    if (i < len - 1) continue;
-    const window = [];
-    for (let j = i - len + 1; j <= i; j++) {
-      const v = values[j];
-      if (v == null) continue;
-      window.push(v);
-    }
-    if (window.length < Math.max(20, Math.floor(len * 0.6))) continue;
-    window.sort((a, b) => a - b);
-    const idx = Math.min(window.length - 1, Math.max(0, Math.floor(p01 * (window.length - 1))));
-    out[i] = window[idx];
+  const tr = new Array(candles.length).fill(null);
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    const prevClose = i > 0 ? candles[i - 1].close : c.close;
+    const a = c.high - c.low;
+    const b = Math.abs(c.high - prevClose);
+    const d = Math.abs(c.low - prevClose);
+    tr[i] = Math.max(a, b, d);
   }
+
+  // Wilder EMA
+  let prev = null;
+  for (let i = 0; i < tr.length; i++) {
+    const v = tr[i];
+    if (v == null) continue;
+
+    if (prev == null) {
+      // seed: simpele average van eerste `period` als het kan
+      if (i < period - 1) continue;
+      let sum = 0;
+      for (let j = i - period + 1; j <= i; j++) sum += tr[j];
+      prev = sum / period;
+      out[i] = prev;
+    } else {
+      prev = (prev * (period - 1) + v) / period;
+      out[i] = prev;
+    }
+  }
+
   return out;
 }
 
