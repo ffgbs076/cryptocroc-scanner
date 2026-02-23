@@ -3,27 +3,30 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Forest</title>
-  <style>
-    html, body { height: 100%; margin: 0; background:#0e1117; color:#d6d6d6; font-family: -apple-system, system-ui, Segoe UI, Roboto, Arial; }
-    .top { padding: 10px 12px; display:flex; gap:12px; align-items:center; border-bottom:1px solid #222; }
-    #statusPill { font-weight: 800; }
-    #wrap { height: calc(100% - 48px); }
-    #priceChart { width:100%; height:100%; }
-    pre { margin:0; padding:12px; white-space:pre-wrap; }
-  </style>
+  <title>Forest BTC (Weekly)</title>
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div class="top">
     <div id="statusPill">Loading…</div>
-    <div id="meta" style="opacity:.8"></div>
+    <div id="meta" class="meta"></div>
   </div>
 
-  <div id="wrap">
-    <div id="priceChart"></div>
+  <div class="wrap">
+    <div class="panel">
+      <div class="panelTitle">Price + Forest overlay</div>
+      <div id="priceChart" class="chart"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panelTitle">Forest (z-score)</div>
+      <div id="forestChart" class="chart small"></div>
+    </div>
+
+    <pre id="debug"></pre>
   </div>
 
-  <!-- PINNED VERSION -->
+  <!-- pinned version -->
   <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/app.js"></script>
 </body>
