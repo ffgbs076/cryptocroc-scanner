@@ -1,12 +1,23 @@
-function $(id){ return document.getElementById(id); }
+// public/app.js
 
-function setPill(text, kind){
+function $(id) { return document.getElementById(id); }
+
+function setPill(text, kind) {
   const pill = $("statusPill");
   pill.textContent = text;
-  pill.style.color = "var(--fg)";
-  if (kind === "good") pill.style.color = "var(--good)";
-  if (kind === "bad") pill.style.color = "var(--bad)";
-  if (kind === "mid") pill.style.color = "var(--mid)";
+  pill.style.color = "#d6d6d6";
+  if (kind === "good") pill.style.color = "#00c853";
+  if (kind === "bad") pill.style.color = "#ff5252";
+  if (kind === "mid") pill.style.color = "#ffd166";
+}
+
+async function loadData() {
+  const res = await fetch("/api/forest?includeCurrentWeek=false", {
+    headers: { accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "API /api/forest failed");
+  return JSON.parse(text);
 }
 
 function makeChart(el) {
@@ -21,109 +32,91 @@ function makeChart(el) {
   });
 }
 
-async function getJson(url){
-  const r = await fetch(url, { headers:{ accept:"application/json" }});
-  const t = await r.text();
-  if (!r.ok) throw new Error(t || `HTTP ${r.status}`);
-  return JSON.parse(t);
+function lastNonNull(arr) {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (arr[i] != null) return { i, v: arr[i] };
+  }
+  return { i: -1, v: null };
 }
 
-function lastNonNullIndex(arr){
-  for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return i;
-  return -1;
-}
-
-async function main(){
+async function init() {
   setPill("Loading…", "mid");
 
-  // Truth = alleen gesloten week
-  const forest = await getJson("/api/forest?includeCurrentWeek=false&forecast=1");
-  // Preview = inclusief lopende week (mag verschillen)
-  const forestLive = await getJson("/api/forest?includeCurrentWeek=true&forecast=1");
-  // Kansmodel + structure gate (kan “no edge” geven)
-  const prob = await getJson("/api/probability?includeCurrentWeek=false");
+  if (!window.LightweightCharts || !LightweightCharts.createChart) {
+    throw new Error("LightweightCharts not loaded. Check index.html (must pin v4).");
+  }
 
-  $("meta").textContent = `Source: ${forest.source} • TF: ${forest.interval} • Forest: z-score`;
-  $("probText").textContent =
-    prob.isTradeable
-      ? `TRADEABLE: ${prob.direction.toUpperCase()} • pDown=${prob.pDown.toFixed(2)} • conf=${prob.confidence} • confluence=${prob.structure.relevantConfluence}`
-      : `NO EDGE • pDown=${prob.pDown.toFixed(2)} • conf=${prob.confidence} • confluence=${prob.structure.relevantConfluence}`;
+  const data = await loadData();
+
+  const candlesArr = data.candles || [];
+  const forestArr = data.forest || [];
+  const turningPoints = data.turningPoints || [];
+
+  $("meta").textContent = `Source: ${data.source} • TF: ${data.interval} • closed weeks`;
+  $("debug").textContent = JSON.stringify({
+    candles: candlesArr.length,
+    forestLen: forestArr.length,
+    turningPoints: turningPoints.length
+  }, null, 2);
 
   // PRICE CHART
   const priceEl = $("priceChart");
   const priceChart = makeChart(priceEl);
 
   const candleSeries = priceChart.addCandlestickSeries();
-  candleSeries.setData(forest.candles);
+  candleSeries.setData(candlesArr);
 
-  // Forest overlay op prijs (altijd zichtbaar)
-  const overlayTruth = priceChart.addLineSeries({ lineWidth: 2 });
-  overlayTruth.setData(forest.overlayProjected || []);
-
-  // Live preview overlay (gestippeld)
-  const overlayLive = priceChart.addLineSeries({ lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
-  overlayLive.setData(forestLive.overlayProjected || []);
-
-  // Forecast (gestippeld vooruit, begrensd)
-  const overlayForecast = priceChart.addLineSeries({ lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
-  overlayForecast.setData(forest.forecastProjected || []);
-
-  // Turning points markers op candles
-  const markers = (forest.turningPoints || []).map(tp => ({
+  const markers = turningPoints.map(tp => ({
     time: tp.time,
     position: tp.type === "up" ? "belowBar" : "aboveBar",
     color: tp.type === "up" ? "#00c853" : "#ff5252",
     shape: tp.type === "up" ? "arrowUp" : "arrowDown",
     text: tp.type === "up" ? "UP" : "DOWN"
   }));
-  candleSeries.setMarkers(markers);
+  if (markers.length) candleSeries.setMarkers(markers);
 
   priceChart.timeScale().fitContent();
 
-  // FOREST CHART (oscillator)
+  // FOREST CHART
   const forestEl = $("forestChart");
   const forestChart = makeChart(forestEl);
 
-  const zero = forestChart.addLineSeries({ lineWidth: 1 });
-  zero.setData(forest.candles.map(c => ({ time: c.time, value: 0 })));
+  const zeroLine = forestChart.addLineSeries({ lineWidth: 1, color: "#666" });
+  zeroLine.setData(candlesArr.map(c => ({ time: c.time, value: 0 })));
 
-  const forestTruth = forestChart.addLineSeries({ lineWidth: 2 });
-  forestTruth.setData(forest.forestLine || []);
+  const forestSeries = forestChart.addLineSeries({ lineWidth: 2, color: "#4aa3ff" });
 
-  const forestPreview = forestChart.addLineSeries({ lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
-  forestPreview.setData(forestLive.forestLine || []);
+  const forestLine = candlesArr
+    .map((c, i) => {
+      const v = forestArr[i];
+      if (v == null) return null;
+      return { time: c.time, value: v };
+    })
+    .filter(Boolean);
 
-  // vaste schaal -3..+3
-  forestChart.applyOptions({ rightPriceScale: { autoScale: false, scaleMargins: { top: 0.15, bottom: 0.15 } } });
-  forestTruth.applyOptions({ priceFormat: { type: "price", precision: 2, minMove: 0.01 } });
-
+  forestSeries.setData(forestLine);
   forestChart.timeScale().fitContent();
 
-  // Status tekst op basis van laatste closed waarde
-  const idx = lastNonNullIndex(forest.forestRaw || []);
-  const z = idx >= 0 ? forest.forestRaw[idx] : null;
+  // Sync zoom/scroll
+  priceChart.timeScale().subscribeVisibleTimeRangeChange(range => {
+    if (range) forestChart.timeScale().setVisibleRange(range);
+  });
 
-  if (z == null) setPill("Forest: not enough data", "mid");
-  else if (z <= -0.35) setPill(`Forest: Bearish (${z.toFixed(2)})`, "bad");
-  else if (z >= 0.35) setPill(`Forest: Bullish (${z.toFixed(2)})`, "good");
-  else setPill(`Forest: Neutral (${z.toFixed(2)})`, "mid");
+  // Status op basis van laatste forest (z-score)
+  const last = lastNonNull(forestArr);
+  if (last.v == null) setPill("Forest: not enough data", "mid");
+  else if (last.v > 0.35) setPill(`Forest: Bullish (${last.v.toFixed(2)})`, "good");
+  else if (last.v < -0.35) setPill(`Forest: Bearish (${last.v.toFixed(2)})`, "bad");
+  else setPill(`Forest: Neutral (${last.v.toFixed(2)})`, "mid");
 
-  $("debug").textContent = JSON.stringify({
-    candles: forest.candles.length,
-    forestLinePoints: forest.forestLine?.length,
-    overlayTruth: forest.overlayProjected?.length,
-    overlayLive: forestLive.overlayProjected?.length,
-    forecast: forest.forecastProjected?.length,
-    probability: prob
-  }, null, 2);
-
+  // Resize
   window.addEventListener("resize", () => {
     priceChart.applyOptions({ width: priceEl.clientWidth, height: priceEl.clientHeight });
     forestChart.applyOptions({ width: forestEl.clientWidth, height: forestEl.clientHeight });
   });
 }
 
-main().catch(err => {
+init().catch(err => {
   console.error(err);
   setPill("Error (check debug)", "bad");
   $("debug").textContent = String(err?.message || err);
