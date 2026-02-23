@@ -1,20 +1,18 @@
 function $(id){ return document.getElementById(id); }
 
-function setPill(text){
-  $("statusPill").textContent = text;
-}
+function setPill(text){ $("statusPill").textContent = text; }
 
 async function loadData(){
-  const res = await fetch("/api/forest?includeLive=1", { headers: { "accept":"application/json" } });
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || "API failed");
+  const r = await fetch("/api/forest?includeLive=1", { headers: { accept: "application/json" } });
+  const text = await r.text();
+  if (!r.ok) throw new Error(text || "API failed");
   return JSON.parse(text);
 }
 
-function makeChart(el){
+function makeChart(el, { height }) {
   return LightweightCharts.createChart(el, {
     width: el.clientWidth,
-    height: el.clientHeight,
+    height,
     layout: { background: { color: "#0e1117" }, textColor: "#d6d6d6" },
     grid: { vertLines: { color: "#222" }, horzLines: { color: "#222" } },
     rightPriceScale: { borderColor: "#222" },
@@ -30,48 +28,82 @@ async function init(){
   $("meta").textContent =
     `Source: ${data.source} • TF: ${data.interval} • Truth weeks: ${data.truthCount} • Live: ${data.hasLive ? "yes" : "no"}`;
 
-  const el = $("priceChart");
-  const chart = makeChart(el);
+  // DEBUG onderin (handig)
+  $("debug").textContent = JSON.stringify({
+    bandsNow: data.bandsNow,
+    freezeNow: data.freezeNow
+  }, null, 2);
 
-  const candleSeries = chart.addCandlestickSeries();
-  candleSeries.setData(data.candles);
+  // ---------------- PRICE CHART ----------------
+  const priceEl = $("priceChart");
+  const priceChart = makeChart(priceEl, { height: priceEl.clientHeight });
 
-  // Forest overlay (TRUTH) — SOLID
-  const forestTruth = chart.addLineSeries({
+  const candles = priceChart.addCandlestickSeries();
+  candles.setData(data.candles);
+
+  // Truth overlay (solid)
+  const forestTruth = priceChart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false
   });
-  forestTruth.setData(data.forestOverlayTruth);
+  forestTruth.setData(data.forestOverlayTruth || []);
 
-  // Live preview — dashed
-  const forestLive = chart.addLineSeries({
+  // Live overlay (dashed)
+  const forestLive = priceChart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
-  if (data.forestOverlayLive && data.forestOverlayLive.length){
-    forestLive.setData(data.forestOverlayLive);
-  }
+  if (data.forestOverlayLive?.length) forestLive.setData(data.forestOverlayLive);
 
-  // Forward hint — thinner dashed
-  const forestFwd = chart.addLineSeries({
+  // Forward (dashed thin)
+  const forestFwd = priceChart.addLineSeries({
     lineWidth: 1,
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
-  if (data.forestOverlayForward && data.forestOverlayForward.length){
-    forestFwd.setData(data.forestOverlayForward);
-  }
+  if (data.forestOverlayForward?.length) forestFwd.setData(data.forestOverlayForward);
 
-  chart.timeScale().fitContent();
+  priceChart.timeScale().fitContent();
+
+  // ---------------- FOREST Z CHART ----------------
+  const forestEl = $("forestChart");
+  const forestChart = makeChart(forestEl, { height: forestEl.clientHeight });
+
+  // vaste schaal -3..+3
+  forestChart.priceScale("right").applyOptions({
+    autoScale: false,
+    scaleMargins: { top: 0.2, bottom: 0.2 }
+  });
+
+  // z truth
+  const zTruth = forestChart.addLineSeries({
+    lineWidth: 2,
+    priceLineVisible: false
+  });
+  zTruth.setData(data.forestZTruth || []);
+
+  // z live preview
+  const zLive = forestChart.addLineSeries({
+    lineWidth: 2,
+    priceLineVisible: false,
+    lineStyle: LightweightCharts.LineStyle.Dashed
+  });
+  if (data.forestZLive?.length) zLive.setData(data.forestZLive);
+
+  // “forward” z tekenen als simpele 4 punten uit overlay forward (we reconstrueren z niet; paneel is truth/live genoeg)
+  forestChart.timeScale().fitContent();
+
   setPill(data.regimeLabel);
 
+  // resize
   window.addEventListener("resize", () => {
-    chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+    priceChart.applyOptions({ width: priceEl.clientWidth, height: priceEl.clientHeight });
+    forestChart.applyOptions({ width: forestEl.clientWidth, height: forestEl.clientHeight });
   });
 }
 
 init().catch(err => {
   console.error(err);
-  document.body.innerHTML = `<pre style="color:#ff6666">${String(err?.message || err)}</pre>`;
+  document.body.innerHTML = `<pre style="color:#ff6666;padding:12px">${String(err?.message || err)}</pre>`;
 });
