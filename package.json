@@ -2,7 +2,7 @@
   "name": "cryptocroc-forest-site",
   "private": true,
   "version": "1.0.0",
-  "description": "BTC weekly candles + Forest (bias) on Vercel",
+  "description": "Forest line (truth + live preview) + probability gate + structure confluence",
   "engines": {
     "node": "20.x"
   },
