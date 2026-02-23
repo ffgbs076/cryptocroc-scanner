@@ -1,79 +1,92 @@
 // api/_lib/kraken.js
-// Kraken OHLC helper (BTC/USD).
-// Compat: zowel NAMED exports als DEFAULT export, zodat imports nooit "undefined" zijn.
+// ✅ Exports: getWeeklyBtcCandlesKraken, getDailyBtcCandlesKraken
+// ✅ Uses Kraken OHLC (XBTUSD). Weekly interval = 10080 min, Daily = 1440 min.
 
-const DAY = 24 * 60 * 60;
-const WEEK = 7 * DAY;
+const KRAKEN_BASE = "https://api.kraken.com/0/public/OHLC";
+const PAIR = "XBTUSD";
 
-async function fetchKrakenOHLC(pair, intervalMinutes) {
-  const fetchFn = globalThis.fetch;
-  if (!fetchFn) throw new Error("fetch not available (Node runtime issue).");
+const DAY_SEC = 24 * 60 * 60;
+const WEEK_SEC = 7 * DAY_SEC;
 
-  const url =
-    `https://api.kraken.com/0/public/OHLC?pair=${encodeURIComponent(pair)}&interval=${intervalMinutes}`;
+// Simple in-memory cache (works per warm lambda)
+const cache = new Map(); // key -> { at, ttlMs, value }
 
-  const r = await fetchFn(url, { headers: { accept: "application/json" } });
-  const j = await r.json();
-
-  if (!r.ok) throw new Error(`Kraken HTTP ${r.status}`);
-  if (j?.error?.length) throw new Error(`Kraken error: ${j.error.join(", ")}`);
-
-  const result = j.result || {};
-  const key = Object.keys(result).find((k) => k !== "last");
-  if (!key) throw new Error("Kraken: missing result key");
-
-  const rows = result[key];
-  if (!Array.isArray(rows) || rows.length === 0) throw new Error("Kraken: empty OHLC");
-
-  return rows;
+function cacheGet(key) {
+  const v = cache.get(key);
+  if (!v) return null;
+  if (Date.now() - v.at > v.ttlMs) return null;
+  return v.value;
+}
+function cacheSet(key, value, ttlMs) {
+  cache.set(key, { at: Date.now(), ttlMs, value });
 }
 
-function rowsToCandles(rows, closeTimeSeconds) {
-  return rows.map((row) => {
-    const t = Number(row[0]); // open time (seconds)
-    return {
-      time: t,
-      open: Number(row[1]),
-      high: Number(row[2]),
-      low: Number(row[3]),
-      close: Number(row[4]),
-      volume: Number(row[6]),
-      closeTime: t + closeTimeSeconds
-    };
-  });
+async function fetchKrakenOHLC(intervalMinutes) {
+  const key = `ohlc:${PAIR}:${intervalMinutes}`;
+  const cached = cacheGet(key);
+  if (cached) return cached;
+
+  const url = `${KRAKEN_BASE}?pair=${encodeURIComponent(PAIR)}&interval=${intervalMinutes}`;
+  const res = await fetch(url, { headers: { "accept": "application/json" } });
+  const json = await res.json();
+
+  if (!res.ok) {
+    throw new Error(`Kraken HTTP ${res.status}: ${JSON.stringify(json)}`);
+  }
+  if (json?.error?.length) {
+    throw new Error(`Kraken error: ${json.error.join(", ")}`);
+  }
+
+  const result = json?.result || {};
+  const pairKey = Object.keys(result).find(k => k !== "last");
+  if (!pairKey) throw new Error("Kraken: pair key not found in result");
+
+  const rows = result[pairKey];
+  if (!Array.isArray(rows) || rows.length < 10) throw new Error("Kraken: not enough OHLC rows");
+
+  // Kraken row:
+  // [ time, open, high, low, close, vwap, volume, count ]
+  const candles = rows.map(r => ({
+    time: Number(r[0]), // seconds
+    open: Number(r[1]),
+    high: Number(r[2]),
+    low: Number(r[3]),
+    close: Number(r[4]),
+    volume: Number(r[6]),
+  }));
+
+  // Sort & de-dup
+  candles.sort((a, b) => a.time - b.time);
+  const dedup = [];
+  for (const c of candles) {
+    if (!dedup.length || dedup[dedup.length - 1].time !== c.time) dedup.push(c);
+  }
+
+  // cache 10 minutes
+  cacheSet(key, dedup, 10 * 60 * 1000);
+  return dedup;
 }
 
-function splitTruthVsLive(candles) {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const last = candles[candles.length - 1];
-  const hasLive = !!(last && nowSec < last.closeTime);
+function splitTruthVsLive(all, tfSec) {
+  if (!all.length) return { candlesTruth: [], candlesWithLive: [], hasLive: false };
 
-  return {
-    candlesTruth: hasLive ? candles.slice(0, -1) : candles.slice(),
-    candlesWithLive: candles,
-    hasLive
-  };
+  const now = Math.floor(Date.now() / 1000);
+  const last = all[all.length - 1];
+  const lastCloseTime = last.time + tfSec; // candle start + tfSec
+  const hasLive = now < lastCloseTime;
+
+  const candlesWithLive = all;
+  const candlesTruth = hasLive ? all.slice(0, -1) : all;
+
+  return { candlesTruth, candlesWithLive, hasLive };
 }
 
-// ---- WEEKLY (10080 min) ----
-async function getWeeklyBtcCandlesKraken() {
-  const rows = await fetchKrakenOHLC("XBTUSD", 10080);
-  const candles = rowsToCandles(rows, WEEK);
-  return splitTruthVsLive(candles);
+export async function getWeeklyBtcCandlesKraken() {
+  const all = await fetchKrakenOHLC(10080); // 1w in minutes
+  return splitTruthVsLive(all, WEEK_SEC);
 }
 
-// ---- DAILY (1440 min) ----
-async function getDailyBtcCandlesKraken() {
-  const rows = await fetchKrakenOHLC("XBTUSD", 1440);
-  const candles = rowsToCandles(rows, DAY);
-  return splitTruthVsLive(candles);
+export async function getDailyBtcCandlesKraken() {
+  const all = await fetchKrakenOHLC(1440); // 1d in minutes
+  return splitTruthVsLive(all, DAY_SEC);
 }
-
-// ✅ Named exports (wat jij nu gebruikt)
-export { getWeeklyBtcCandlesKraken, getDailyBtcCandlesKraken };
-
-// ✅ Default export (fallback, zodat bundlers nooit “leeg” krijgen)
-export default {
-  getWeeklyBtcCandlesKraken,
-  getDailyBtcCandlesKraken
-};
