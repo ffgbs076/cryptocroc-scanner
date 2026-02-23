@@ -1,19 +1,19 @@
-// public/app.js
-function $(id){ return document.getElementById(id); }
+function $(id) { return document.getElementById(id); }
 
-function setPill(text){
-  const pill = $("statusPill");
-  pill.textContent = text;
+function setPill(text) {
+  $("statusPill").textContent = text;
 }
 
-async function loadData(){
-  const res = await fetch("/api/forest?includeLive=1", { headers: { "accept":"application/json" } });
+async function loadData() {
+  const res = await fetch("/api/forest?includeLive=1", {
+    headers: { accept: "application/json" }
+  });
   const text = await res.text();
   if (!res.ok) throw new Error(text || "API failed");
   return JSON.parse(text);
 }
 
-function makeChart(el){
+function makeChart(el) {
   return LightweightCharts.createChart(el, {
     width: el.clientWidth,
     height: el.clientHeight,
@@ -25,56 +25,57 @@ function makeChart(el){
   });
 }
 
-async function init(){
+async function init() {
   setPill("Loading…");
   const data = await loadData();
 
   $("meta").textContent =
-    `Source: ${data.source} • TF: ${data.interval} • Truth weeks: ${data.truthCount} • Live: ${data.hasLive ? "yes" : "no"} • Freeze: ${data.freezeNow ? "yes" : "no"}`;
+    `Source: ${data.source} • TF: ${data.interval} • Truth weeks: ${data.truthCount} • Live: ${data.hasLive ? "yes" : "no"}`;
 
   const el = $("priceChart");
   const chart = makeChart(el);
 
-  // Candles (v4.2.0 API)
+  // Candles
   const candleSeries = chart.addCandlestickSeries();
   candleSeries.setData(data.candles);
 
-  // Forest overlay (TRUTH) — SOLID
+  // Forest overlay TRUTH (solid)
   const forestTruth = chart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false
   });
   forestTruth.setData(data.forestOverlayTruth || []);
 
-  // Forest overlay (LIVE PREVIEW) — DASHED
+  // Forest overlay LIVE (dashed hint)
   const forestLive = chart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
-  if (data.forestOverlayLive && data.forestOverlayLive.length){
+  if (data.forestOverlayLive && data.forestOverlayLive.length) {
     forestLive.setData(data.forestOverlayLive);
   }
 
-  // Forward 4w — DASHED thin (hint)
+  // Forward 4w (thin dashed hint)
   const forestFwd = chart.addLineSeries({
     lineWidth: 1,
     priceLineVisible: false,
     lineStyle: LightweightCharts.LineStyle.Dashed
   });
-  if (data.forestOverlayForward && data.forestOverlayForward.length){
+  if (data.forestOverlayForward && data.forestOverlayForward.length) {
     forestFwd.setData(data.forestOverlayForward);
   }
 
   chart.timeScale().fitContent();
-  setPill(data.regimeLabel);
+  setPill(data.regimeLabel || "Forest");
 
   window.addEventListener("resize", () => {
     chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
   });
 }
 
-init().catch(err => {
+init().catch((err) => {
   console.error(err);
-  document.body.innerHTML = `<pre style="color:#ff6666;padding:16px;">${String(err?.message || err)}</pre>`;
+  document.body.innerHTML =
+    `<pre style="color:#ff6666;padding:12px;white-space:pre-wrap">${String(err?.message || err)}</pre>`;
 });
