@@ -1,10 +1,9 @@
 // public/app.js
-
 function $(id){ return document.getElementById(id); }
 
 function setPill(text){
   const pill = $("statusPill");
-  if (pill) pill.textContent = text;
+  pill.textContent = text;
 }
 
 async function loadData(){
@@ -30,26 +29,24 @@ async function init(){
   setPill("Loading…");
   const data = await loadData();
 
-  if ($("meta")) {
-    $("meta").textContent =
-      `Source: ${data.source} • TF: ${data.interval} • Truth weeks: ${data.truthCount} • Live: ${data.hasLive ? "yes" : "no"}`;
-  }
+  $("meta").textContent =
+    `Source: ${data.source} • TF: ${data.interval} • Truth weeks: ${data.truthCount} • Live: ${data.hasLive ? "yes" : "no"} • Freeze: ${data.freezeNow ? "yes" : "no"}`;
 
-  // ----- PRICE CHART -----
   const el = $("priceChart");
   const chart = makeChart(el);
 
+  // Candles (v4.2.0 API)
   const candleSeries = chart.addCandlestickSeries();
   candleSeries.setData(data.candles);
 
-  // Truth overlay (SOLID)
+  // Forest overlay (TRUTH) — SOLID
   const forestTruth = chart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false
   });
   forestTruth.setData(data.forestOverlayTruth || []);
 
-  // Live preview overlay (DASHED)
+  // Forest overlay (LIVE PREVIEW) — DASHED
   const forestLive = chart.addLineSeries({
     lineWidth: 2,
     priceLineVisible: false,
@@ -59,7 +56,7 @@ async function init(){
     forestLive.setData(data.forestOverlayLive);
   }
 
-  // Forward 4w (DASHED thin) - hint
+  // Forward 4w — DASHED thin (hint)
   const forestFwd = chart.addLineSeries({
     lineWidth: 1,
     priceLineVisible: false,
@@ -70,38 +67,10 @@ async function init(){
   }
 
   chart.timeScale().fitContent();
-  setPill(data.regimeLabel || "Forest loaded");
-
-  // ----- OPTIONAL: FOREST Z CHART (als je een tweede div hebt) -----
-  const forestEl = $("forestChart");
-  let forestChart = null;
-  if (forestEl) {
-    forestChart = makeChart(forestEl);
-
-    const zero = forestChart.addLineSeries({ lineWidth: 1, priceLineVisible: false });
-    zero.setData((data.forestZTruth || []).map(p => ({ time: p.time, value: 0 })));
-
-    const zTruth = forestChart.addLineSeries({ lineWidth: 2, priceLineVisible: false });
-    zTruth.setData(data.forestZTruth || []);
-
-    const zLive = forestChart.addLineSeries({
-      lineWidth: 2,
-      priceLineVisible: false,
-      lineStyle: LightweightCharts.LineStyle.Dashed
-    });
-    if (data.forestZLive && data.forestZLive.length) zLive.setData(data.forestZLive);
-
-    forestChart.timeScale().fitContent();
-
-    // Sync zoom/scroll
-    chart.timeScale().subscribeVisibleTimeRangeChange(range => {
-      if (range) forestChart.timeScale().setVisibleRange(range);
-    });
-  }
+  setPill(data.regimeLabel);
 
   window.addEventListener("resize", () => {
     chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
-    if (forestChart) forestChart.applyOptions({ width: forestEl.clientWidth, height: forestEl.clientHeight });
   });
 }
 
