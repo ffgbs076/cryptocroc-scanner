@@ -1,51 +1,44 @@
 // api/forest.js
-import { getSnapshotCandles } from "./_lib/snapshot.js";
-import { calculateForestV2 } from "./_lib/forestEngine.js";
+import { getWeeklyBtcCandlesKraken } from "./_lib/kraken.js";
+import { buildForestOverlay } from "./_lib/forestEngine.js";
 
 export const config = { runtime: "nodejs" };
 
 export default async function handler(req, res) {
   try {
-    const url = new URL(req.url, "http://localhost");
-    const includeCurrentWeek =
-      url.searchParams.get("includeCurrentWeek") === "1" ||
-      url.searchParams.get("includeCurrentWeek") === "true";
+    const includeLive = String(req.query?.includeLive || "0") === "1";
 
-    const candles = await getSnapshotCandles({ includeCurrentWeek });
+    const { candlesTruth, candlesWithLive, hasLive } = await getWeeklyBtcCandlesKraken();
+    const candles = includeLive ? candlesWithLive : candlesTruth;
 
-    // Forest v2 (robust + lock)
-    const engine = calculateForestV2(candles, {
-      emaLen: 50,
-      zWindow: 208,
-      enter: 0.45,
-      exit: 0.25,
-      confirmWeeks: 2
-    });
+    const out = buildForestOverlay({ candlesTruth, candlesWithLive, hasLive });
 
-    res.setHeader("Content-Type", "application/json");
-    res.status(200).send(
-      JSON.stringify(
-        {
-          source: "kraken+snapshot",
-          interval: "1w",
-          includeCurrentWeek,
-          candles,
-          ema50: engine.ema50,
-          forestZ: engine.forestZ,
-          regime: engine.regime,
-          last: {
-            time: candles[candles.length - 1]?.time ?? null,
-            close: candles[candles.length - 1]?.close ?? null,
-            forestZ: engine.forestZ[engine.forestZ.length - 1] ?? null,
-            regime: engine.regime[engine.regime.length - 1] ?? "neutral"
-          }
-        },
-        null,
-        2
-      )
-    );
+    res.setHeader("content-type", "application/json; charset=utf-8");
+    res.status(200).send(JSON.stringify({
+      source: "kraken",
+      interval: "1w",
+      truthCount: candlesTruth.length,
+      hasLive,
+      candles: candles.map(c => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close
+      })),
+
+      forestOverlayTruth: out.forestOverlayTruth,
+      forestOverlayLive: out.forestOverlayLive,
+      forestOverlayForward: out.forestOverlayForward,
+
+      forestZTruth: out.forestZTruth,
+      forestZLive: out.forestZLive,
+
+      bandsNow: out.bandsNow,
+      freezeNow: out.freezeNow,
+      regimeLabel: out.regimeLabel
+    }));
   } catch (e) {
-    res.setHeader("Content-Type", "application/json");
-    res.status(500).send(JSON.stringify({ error: String(e?.message || e) }));
+    res.status(500).json({ error: String(e?.message || e) });
   }
 }
