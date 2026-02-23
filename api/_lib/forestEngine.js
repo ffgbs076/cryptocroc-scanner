@@ -1,111 +1,199 @@
-import { ema, stdev, atr, clamp } from "./indicators.js";
+// api/_lib/forestEngine.js
 
-export function buildForestOverlay({ candlesTruth, candlesWithLive, hasLive }){
-  // ====== SETTINGS (jij kunt later tunen) ======
-  const EMA_BASE = 50;          // weekly ~ 1 jaar
-  const Z_LOOKBACK = 156;       // ~3 jaar weekly
-  const SMOOTH = 6;             // smoothing op z
-  const ATR_LEN = 14;           // weekly ATR
-  const Z_CAP = 2.5;            // clamp tegen idiote uitschieters
-  const MULT = 0.55;            // hoe “hard” hij op prijs ligt (lager = rustiger)
-  const FWD_WEEKS = 8;          // vooruit tekenen max
-  const FWD_SLOPE_CAP_ATR = 0.25; // max slope per week in ATR units (veilig)
-  // ============================================
+const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi);
 
-  function calc(candles){
-    const closes = candles.map(c => c.close);
-    const highs  = candles.map(c => c.high);
-    const lows   = candles.map(c => c.low);
+function ema(values, len) {
+  const out = new Array(values.length).fill(null);
+  if (len <= 1) return out;
 
-    const base = ema(closes, EMA_BASE);
-    const diff = closes.map((c,i) => (c == null || base[i] == null) ? null : (c - base[i]));
-    const dev  = stdev(diff, Z_LOOKBACK);
+  const k = 2 / (len + 1);
+  let prev = null;
 
-    const zRaw = diff.map((d,i) => (d == null || dev[i] == null || dev[i] === 0) ? null : (d / dev[i]));
-    const zSm  = ema(zRaw, SMOOTH);
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (!Number.isFinite(v)) continue;
 
-    const a = atr(highs, lows, closes, ATR_LEN);
+    if (prev == null) prev = v;
+    else prev = v * k + prev * (1 - k);
 
-    // overlay on price
-    const overlay = candles.map((c,i) => {
-      if (zSm[i] == null || a[i] == null) return null;
-      const zz = clamp(zSm[i], -Z_CAP, Z_CAP);
-      const val = c.close + (zz * a[i] * MULT);
-      return { time: c.time, value: val };
-    }).filter(Boolean);
+    out[i] = prev;
+  }
+  return out;
+}
 
-    return { zSm, atrArr: a, overlay };
+function median(arr) {
+  const a = arr.filter(Number.isFinite).slice().sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+function robustZ(values, window) {
+  const out = new Array(values.length).fill(null);
+  const SCALE = 1.4826;
+
+  for (let i = 0; i < values.length; i++) {
+    if (i < window - 1) continue;
+
+    const slice = values.slice(i - window + 1, i + 1).filter(Number.isFinite);
+    if (slice.length < window * 0.8) continue;
+
+    const med = median(slice);
+    const devs = slice.map((x) => Math.abs(x - med));
+    const mad = median(devs);
+
+    if (!Number.isFinite(med) || !Number.isFinite(mad) || mad === 0) continue;
+
+    const x = values[i];
+    out[i] = (x - med) / (SCALE * mad);
   }
 
-  // Truth (alleen gesloten weken)
-  const truth = calc(candlesTruth);
+  return out;
+}
 
-  // Live (truth + huidige week)
-  const live = hasLive ? calc(candlesWithLive) : null;
+function atr(candles, len = 14) {
+  const tr = new Array(candles.length).fill(null);
 
-  // ====== Forward line (op basis van LAST TRUTH) ======
-  const fwd = [];
-  if (truth.overlay.length >= 10){
-    const lastIdx = candlesTruth.length - 1;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    const prev = candles[i - 1];
+    if (!c) continue;
 
-    // Pak laatste 4 z-punten om slope te schatten (rustig)
-    const zs = truth.zSm;
-    const a  = truth.atrArr;
-    const cLast = candlesTruth[lastIdx];
-    const zLast = zs[lastIdx];
-    const atrLast = a[lastIdx];
+    const hl = c.high - c.low;
+    const hc = prev ? Math.abs(c.high - prev.close) : hl;
+    const lc = prev ? Math.abs(c.low - prev.close) : hl;
 
-    if (zLast != null && atrLast != null){
-      // slope = (zLast - zPrev) / N
-      let zPrev = null;
-      for (let k = lastIdx - 1; k >= 0; k--){
-        if (zs[k] != null) { zPrev = zs[k]; break; }
-      }
-      const rawSlope = (zPrev == null) ? 0 : (zLast - zPrev);
+    tr[i] = Math.max(hl, hc, lc);
+  }
 
-      // demping: hoe extremer z, hoe minder doortrekken
-      const damp = 1 - Math.min(Math.abs(zLast) / 3, 1); // 0..1
-      let slope = rawSlope * damp;
+  const trEma = ema(tr.map((x) => (x == null ? NaN : x)), len);
+  return trEma.map((x) => (Number.isFinite(x) ? x : null));
+}
 
-      // extra cap: slope mag niet “te hard”
-      const maxSlope = (atrLast * FWD_SLOPE_CAP_ATR) / (atrLast * MULT); 
-      // (delen door atr*mult zodat slope in z-units capped wordt)
-      slope = clamp(slope, -Math.abs(maxSlope), Math.abs(maxSlope));
+function makeRegimeLabel(zNow) {
+  if (!Number.isFinite(zNow)) return "Forest: not enough data";
+  if (zNow >= 2.2) return `Forest: EXTREME BULL (${zNow.toFixed(2)})`;
+  if (zNow >= 1.5) return `Forest: STRONG BULL (${zNow.toFixed(2)})`;
+  if (zNow >= 0.45) return `Forest: BULL (${zNow.toFixed(2)})`;
+  if (zNow <= -2.2) return `Forest: EXTREME BEAR (${zNow.toFixed(2)})`;
+  if (zNow <= -1.5) return `Forest: STRONG BEAR (${zNow.toFixed(2)})`;
+  if (zNow <= -0.45) return `Forest: BEAR (${zNow.toFixed(2)})`;
+  return `Forest: NEUTRAL (${zNow.toFixed(2)})`;
+}
 
-      // startpoint = laatste truth overlay value
-      const lastOverlayPoint = truth.overlay[truth.overlay.length - 1];
-      if (lastOverlayPoint){
-        let zNow = zLast;
-        let tNow = cLast.time;
-        fwd.push({ time: tNow, value: lastOverlayPoint.value });
+export function buildForestOverlay({ candlesTruth, candlesWithLive, hasLive }) {
+  // ====== instellingen (super belangrijk voor stabiliteit) ======
+  const EMA_LEN = 50;
+  const Z_WINDOW = 208;     // ~4 jaar weekly
+  const Z_CAP = 2.5;        // clamp tegen extreme uitschieters
+  const MULT = 0.55;        // hoe sterk overlay op prijs zit (lager = stabieler)
+  const FORWARD_WEEKS = 10; // vooruit = hint, kort houden
+  const WEEK_SEC = 7 * 24 * 60 * 60;
 
-        for (let i = 1; i <= FWD_WEEKS; i++){
-          tNow = tNow + 7*24*60*60;
+  // ====== Truth berekening ======
+  const closesT = candlesTruth.map((c) => c.close);
+  const emaT = ema(closesT, EMA_LEN);
 
-          // z vooruit (maar capped)
-          zNow = clamp(zNow + slope, -Z_CAP, Z_CAP);
+  const detrendT = closesT.map((c, i) => {
+    const e = emaT[i];
+    if (!Number.isFinite(c) || !Number.isFinite(e)) return null;
+    return c - e;
+  });
 
-          // projectie op prijs: we nemen als “basis” de laatste close (simpel, eerlijk)
-          const v = cLast.close + (zNow * atrLast * MULT);
-          fwd.push({ time: tNow, value: v });
-        }
-      }
+  const zT = robustZ(detrendT, Z_WINDOW);
+  const atrT = atr(candlesTruth, 14);
+
+  // overlay = close + clamp(z)*ATR*MULT
+  const forestOverlayTruth = candlesTruth.map((c, i) => {
+    const z = zT[i];
+    const a = atrT[i];
+    if (!Number.isFinite(z) || !Number.isFinite(a)) return null;
+    const zz = clamp(z, -Z_CAP, Z_CAP);
+    return { time: c.time, value: c.close + zz * a * MULT };
+  }).filter(Boolean);
+
+  const zNowTruth = zT[zT.length - 1];
+  const regimeLabel = makeRegimeLabel(zNowTruth);
+
+  // ====== Live preview (alleen laatste punt extra) ======
+  let forestOverlayLive = [];
+  if (hasLive && candlesWithLive.length > candlesTruth.length) {
+    const live = candlesWithLive[candlesWithLive.length - 1];
+
+    // we doen live: EMA en detrend op basis van truth + live close
+    const closesL = candlesWithLive.map((c) => c.close);
+    const emaL = ema(closesL, EMA_LEN);
+
+    const detrendL = closesL.map((c, i) => {
+      const e = emaL[i];
+      if (!Number.isFinite(c) || !Number.isFinite(e)) return null;
+      return c - e;
+    });
+
+    const zL = robustZ(detrendL, Z_WINDOW);
+    const atrL = atr(candlesWithLive, 14);
+
+    const i = candlesWithLive.length - 1;
+    const z = zL[i];
+    const a = atrL[i];
+
+    if (Number.isFinite(z) && Number.isFinite(a)) {
+      const zz = clamp(z, -Z_CAP, Z_CAP);
+
+      // Belangrijk: live lijn = truth lijn + 1 extra punt
+      forestOverlayLive = forestOverlayTruth.concat([
+        { time: live.time, value: live.close + zz * a * MULT }
+      ]);
     }
   }
 
-  // ====== Regime label (simpel) ======
-  let regimeLabel = "Forest: Neutral";
-  const lastTruthZ = truth.zSm[candlesTruth.length - 1];
-  if (lastTruthZ != null){
-    if (lastTruthZ > 0.35) regimeLabel = `Forest: Bullish (${lastTruthZ.toFixed(2)})`;
-    else if (lastTruthZ < -0.35) regimeLabel = `Forest: Bearish (${lastTruthZ.toFixed(2)})`;
-    else regimeLabel = `Forest: Neutral (${lastTruthZ.toFixed(2)})`;
+  // ====== Forward hint ======
+  // We gebruiken de slope van de laatste 6 truth z-waarden (stabiel), maar:
+  // - slope begrenzen
+  // - dempen bij extreme |z|
+  // - projectie op basis van laatste truth close + ATR
+  let forestOverlayForward = [];
+  {
+    const last = candlesTruth[candlesTruth.length - 1];
+    const lastClose = last?.close;
+    const lastAtr = atrT[atrT.length - 1];
+    const lastZ = zNowTruth;
+
+    if (Number.isFinite(lastClose) && Number.isFinite(lastAtr) && Number.isFinite(lastZ)) {
+      // slope van z (laatste 6 weken)
+      const tail = zT.slice(-6).filter(Number.isFinite);
+      let slope = 0;
+      if (tail.length >= 2) {
+        slope = (tail[tail.length - 1] - tail[0]) / (tail.length - 1);
+      }
+
+      // dempen als we al extreem zitten
+      const damp = 1 - clamp(Math.abs(lastZ) / 3, 0, 1); // 0..1
+      slope *= damp;
+
+      // slope limiter: max per week
+      slope = clamp(slope, -0.25, 0.25);
+
+      const points = [];
+      let zF = lastZ;
+
+      for (let k = 1; k <= FORWARD_WEEKS; k++) {
+        zF = clamp(zF + slope, -Z_CAP, Z_CAP);
+
+        const t = last.time + k * WEEK_SEC;
+        const v = lastClose + zF * lastAtr * MULT;
+
+        points.push({ time: t, value: v });
+      }
+
+      forestOverlayForward = points;
+    }
   }
 
   return {
-    forestOverlayTruth: truth.overlay,
-    forestOverlayLive: live ? live.overlay : [],
-    forestOverlayForward: fwd,
+    forestOverlayTruth,
+    forestOverlayLive,
+    forestOverlayForward,
     regimeLabel
   };
 }
