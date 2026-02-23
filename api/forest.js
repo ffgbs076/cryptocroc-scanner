@@ -1,26 +1,17 @@
 // api/forest.js
-import { getWeeklyBtcCandlesKraken, getDailyBtcCandlesKraken } from "./_lib/kraken.js";
+import { getWeeklyBtcCandlesKraken } from "./_lib/kraken.js";
 import { buildForestOverlay } from "./_lib/forestEngine.js";
 
 export const config = { runtime: "nodejs" };
 
-export default async function handler(req, res){
-  try{
+export default async function handler(req, res) {
+  try {
     const includeLive = String(req.query?.includeLive || "0") === "1";
 
-    const weekly = await getWeeklyBtcCandlesKraken();
-    const daily = await getDailyBtcCandlesKraken();
-
-    const { candlesTruth, candlesWithLive, hasLive } = weekly;
-
+    const { candlesTruth, candlesWithLive, hasLive } = await getWeeklyBtcCandlesKraken();
     const baseCandles = includeLive ? candlesWithLive : candlesTruth;
 
-    const out = buildForestOverlay({
-      candlesTruth,
-      candlesWithLive,
-      hasLive,
-      dailyCandles: daily.candlesTruth // daily truth is genoeg
-    });
+    const out = buildForestOverlay({ candlesTruth, candlesWithLive, hasLive });
 
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.status(200).send(JSON.stringify({
@@ -28,6 +19,7 @@ export default async function handler(req, res){
       interval: "1w",
       truthCount: candlesTruth.length,
       hasLive,
+
       candles: baseCandles.map(c => ({
         time: c.time,
         open: c.open,
@@ -35,12 +27,22 @@ export default async function handler(req, res){
         low: c.low,
         close: c.close
       })),
+
+      // overlay lijnen (op prijs chart)
       forestOverlayTruth: out.forestOverlayTruth,
       forestOverlayLive: out.forestOverlayLive,
       forestOverlayForward: out.forestOverlayForward,
+
+      // oscillator data (voor onder chart als je wil)
+      forestZTruth: out.forestZTruth,
+      forestZLive: out.forestZLive,
+
+      // status/info
+      bandsNow: out.bandsNow,
+      freezeNow: out.freezeNow,
       regimeLabel: out.regimeLabel
     }));
-  } catch(e){
+  } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }
 }
