@@ -1,66 +1,65 @@
 // api/_lib/kraken.js
-// Kraken OHLC helper voor BTC weekly candles (Vercel Node runtime)
+// Haalt BTC/USD weekly candles op bij Kraken en zet ze om naar numbers + unix seconds.
 
-export async function fetchKrakenOHLC({ pair = "XBTUSD", interval = 10080 } = {}) {
-  const url = `https://api.kraken.com/0/public/OHLC?pair=${encodeURIComponent(
-    pair
-  )}&interval=${interval}`;
+const KRAKEN_OHLC =
+  "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=10080"; // 10080 = 1 week
 
-  const ac = new AbortController();
-  const timeout = setTimeout(() => ac.abort(), 12000);
-
-  let r;
-  try {
-    r = await fetch(url, {
-      signal: ac.signal,
-      headers: { accept: "application/json" },
-    });
-  } catch (e) {
-    clearTimeout(timeout);
-    throw new Error("Kraken fetch failed: " + (e?.message || String(e)));
-  }
-  clearTimeout(timeout);
-
-  const text = await r.text();
+async function fetchJson(url) {
+  const r = await fetch(url, { headers: { accept: "application/json" } });
+  const j = await r.json().catch(() => null);
   if (!r.ok) {
-    throw new Error(`Kraken HTTP ${r.status}: ${text.slice(0, 200)}`);
+    throw new Error(`Kraken HTTP ${r.status}: ${JSON.stringify(j)}`);
   }
-
-  let j;
-  try {
-    j = JSON.parse(text);
-  } catch {
-    throw new Error("Kraken returned non-JSON: " + text.slice(0, 200));
+  if (!j || j.error?.length) {
+    throw new Error(`Kraken error: ${JSON.stringify(j?.error || j)}`);
   }
-
-  if (j?.error?.length) {
-    throw new Error("Kraken API error: " + j.error.join(", "));
-  }
-
-  const result = j.result || {};
-  const key = Object.keys(result).find((k) => Array.isArray(result[k]));
-  if (!key) {
-    throw new Error("Kraken OHLC missing result array");
-  }
-
-  const rows = result[key];
-
-  // Kraken row format:
-  // [time, open, high, low, close, vwap, volume, count]
-  return rows.map((row) => ({
-    time: Number(row[0]),
-    open: Number(row[1]),
-    high: Number(row[2]),
-    low: Number(row[3]),
-    close: Number(row[4]),
-    volume: Number(row[6]),
-  }));
+  return j;
 }
 
-/**
- * ✅ Dit is de functie die jouw api/forest.js al probeert te gebruiken.
- * Daarom exporteren we hem exact met die naam.
- */
-export async function getWeeklyBtcCandlesKraken() {
-  return fetchKrakenOHLC({ pair: "XBTUSD", interval: 10080 }); // 10080 = 1 week
+function normalizeKrakenOHLC(row) {
+  // row: [time, open, high, low, close, vwap, volume, count]
+  const time = Number(row[0]); // seconds
+  const open = Number(row[1]);
+  const high = Number(row[2]);
+  const low = Number(row[3]);
+  const close = Number(row[4]);
+
+  if (!Number.isFinite(time) || !Number.isFinite(open) || !Number.isFinite(close)) return null;
+
+  return { time, open, high, low, close };
 }
+
+// Simpele “is week candle gesloten?” check:
+// Kraken levert soms een lopende week mee. Wij willen standaard alleen gesloten weken.
+function filterClosedWeeks(candles) {
+  if (!candles.length) return candles;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const weekSec = 7 * 24 * 60 * 60;
+
+  // Als laatste candle minder dan ~6 dagen oud is, is die waarschijnlijk nog lopend.
+  const last = candles[candles.length - 1];
+  if (nowSec - last.time < weekSec - 3600) {
+    return candles.slice(0, -1);
+  }
+  return candles;
+}
+
+async function getWeeklyBtcCandlesKraken({ includeCurrentWeek = false } = {}) {
+  const j = await fetchJson(KRAKEN_OHLC);
+
+  // Kraken geeft key terug zoals "XXBTZUSD" of "XBTUSD" afhankelijk van pair mapping.
+  const resultKey = Object.keys(j.result).find((k) => k !== "last");
+  const rows = j.result[resultKey] || [];
+
+  let candles = rows.map(normalizeKrakenOHLC).filter(Boolean);
+
+  // Sorteren voor zekerheid
+  candles.sort((a, b) => a.time - b.time);
+
+  if (!includeCurrentWeek) candles = filterClosedWeeks(candles);
+
+  return candles;
+}
+
+module.exports = { getWeeklyBtcCandlesKraken };
