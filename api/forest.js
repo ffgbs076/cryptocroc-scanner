@@ -10,14 +10,14 @@ export default async function handler(req, res) {
     const { candlesTruth, candlesWithLive, hasLive } =
       await getWeeklyBtcCandlesKraken();
 
-    const baseCandles = includeLive ? candlesWithLive : candlesTruth;
-
     const out = buildForestOverlay({
       candlesTruth,
       candlesWithLive,
       hasLive,
-      forwardWeeks: 4, // 👈 jij wilde 4 weken vooruit (hint-lijn)
+      forwardWeeks: 4, // jij wilde 4 weken vooruit
     });
+
+    const baseCandles = includeLive ? candlesWithLive : candlesTruth;
 
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.status(200).send(
@@ -26,6 +26,7 @@ export default async function handler(req, res) {
         interval: "1w",
         truthCount: candlesTruth.length,
         hasLive,
+
         candles: baseCandles.map((c) => ({
           time: c.time,
           open: c.open,
@@ -34,15 +35,13 @@ export default async function handler(req, res) {
           close: c.close,
         })),
 
-        // Overlay op prijs-chart
-        forestOverlayTruth: out.forestOverlayTruth,     // ✅ repaint-vrij (closed weeks)
-        forestOverlayLive: out.forestOverlayLive,       // 👀 preview (mag bewegen)
-        forestOverlayForward: out.forestOverlayForward, // 👀 hint 4 weken vooruit
+        forestOverlayTruth: out.forestOverlayTruth,     // SOLID (truth)
+        forestOverlayLive: out.forestOverlayLive,       // DASHED (live preview)
+        forestOverlayForward: out.forestOverlayForward, // DASHED (4w hint)
 
-        // Extra info
-        forestZTruth: out.forestZTruth,
-        bandsNow: out.bandsNow,
+        // extra info (handig)
         regimeLabel: out.regimeLabel,
+        forestZNow: out.forestZNow,
       })
     );
   } catch (e) {
