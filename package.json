@@ -1,12 +1,12 @@
 {
-  "name": "cryptocroc-forest-site",
+  "name": "cryptocroc-forest",
   "private": true,
   "version": "1.0.0",
-  "description": "Forest line (truth + live preview) + probability gate + structure confluence",
+  "description": "BTC weekly candles + Forest line on Vercel",
   "engines": {
     "node": "20.x"
   },
   "scripts": {
-    "build": "echo \"no build\""
+    "build": "echo \"no build needed\""
   }
 }
