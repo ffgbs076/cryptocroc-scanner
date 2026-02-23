@@ -1,24 +1,24 @@
 // api/probability.js
-// Minimal, stable endpoint (optional). Uses weekly truth only.
-// Exists mainly to prevent "is not a function" build errors.
+// Minimal & bulletproof: geen daily import, geen daily call.
+// Bestaat alleen zodat je deploy niet kan falen.
 
-import { getDailyBtcCandlesKraken, getWeeklyBtcCandlesKraken } from "./_lib/kraken.js";
+import { getWeeklyBtcCandlesKraken } from "./_lib/kraken.js";
 import { buildForestOverlay } from "./_lib/forestEngine.js";
 
 export const config = { runtime: "nodejs" };
 
 export default async function handler(req, res) {
   try {
-    // Just proving daily function exists (so you never get that error again)
-    // We don't have to use it, but we keep it for future.
-    await getDailyBtcCandlesKraken();
-
     const { candlesTruth, candlesWithLive, hasLive } = await getWeeklyBtcCandlesKraken();
     const out = buildForestOverlay({ candlesTruth, candlesWithLive, hasLive });
 
     res.setHeader("content-type", "application/json; charset=utf-8");
     res.status(200).send(JSON.stringify({
       ok: true,
+      source: "kraken",
+      interval: "1w",
+      truthCount: candlesTruth.length,
+      hasLive,
       regimeLabel: out.regimeLabel,
       freezeNow: out.freezeNow,
       bandsNow: out.bandsNow
