@@ -28,16 +28,13 @@ export default async function handler(req, res) {
         close: c.close
       })),
 
-      // overlay lijnen (op prijs chart)
       forestOverlayTruth: out.forestOverlayTruth,
       forestOverlayLive: out.forestOverlayLive,
       forestOverlayForward: out.forestOverlayForward,
 
-      // oscillator data (voor onder chart als je wil)
       forestZTruth: out.forestZTruth,
       forestZLive: out.forestZLive,
 
-      // status/info
       bandsNow: out.bandsNow,
       freezeNow: out.freezeNow,
       regimeLabel: out.regimeLabel
