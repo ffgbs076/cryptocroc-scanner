@@ -1,10 +1,12 @@
-// api/forest.js
+// api/forest.js  (KRACKEN data, geen Binance geo-blok)
+// Works on Vercel Node runtime.
+
 export const config = { runtime: "nodejs" };
 
-const TF_MAP = {
-  "15m": { cgDays: 30, interval: "15m", stepSec: 15 * 60 },
-  "1D":  { cgDays: 365 * 2, interval: "daily", stepSec: 24 * 60 * 60 },
-  "1W":  { cgDays: 365 * 8, interval: "daily", stepSec: 24 * 60 * 60 } // we resamplen naar week
+const TF_CFG = {
+  "15m": { intervalMin: 15, bars: 900 },   // ~9.4 dagen
+  "1D":  { intervalMin: 1440, bars: 1200 },// ~3.3 jaar
+  "1W":  { intervalMin: 10080, bars: 700 } // ~13 jaar (meestal minder beschikbaar)
 };
 
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
@@ -37,19 +39,6 @@ function atr(high, low, close, len){
   return ema(tr, len);
 }
 
-function stdev(values, len){
-  const out = [];
-  for (let i = 0; i < values.length; i++){
-    if (i < len - 1) { out.push(null); continue; }
-    const win = values.slice(i-len+1, i+1).filter(v => v != null);
-    if (!win.length) { out.push(null); continue; }
-    const m = win.reduce((s,v)=>s+v,0) / win.length;
-    const v = win.reduce((s,x)=>s+(x-m)*(x-m),0) / win.length;
-    out.push(Math.sqrt(v));
-  }
-  return out;
-}
-
 function zscore(series, lookback){
   const out = [];
   for (let i = 0; i < series.length; i++){
@@ -63,29 +52,22 @@ function zscore(series, lookback){
   return out;
 }
 
-function resampleToWeekly(dailyCandles){
-  // verwacht: [{time, open, high, low, close, volume}] time in seconds (UTC)
-  // we maken weekbars op basis van ISO week-start (maandag 00:00 UTC)
-  const byWeek = new Map();
-  for (const c of dailyCandles){
-    const d = new Date(c.time * 1000);
-    const day = d.getUTCDay(); // 0=Sun..6=Sat
-    const diffToMon = (day + 6) % 7;
-    const mon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-    mon.setUTCDate(mon.getUTCDate() - diffToMon);
-    const key = Math.floor(mon.getTime()/1000);
+function linregSlope(values, lookback){
+  const n = lookback;
+  const ys = values.slice(-n);
+  if (ys.length < n) return 0;
+  if (ys.some(v => v == null)) return 0;
 
-    if (!byWeek.has(key)){
-      byWeek.set(key, { time: key, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume });
-    } else {
-      const w = byWeek.get(key);
-      w.high = Math.max(w.high, c.high);
-      w.low  = Math.min(w.low, c.low);
-      w.close = c.close;
-      w.volume += (c.volume || 0);
-    }
+  const xMean = (n - 1) / 2;
+  const yMean = ys.reduce((s,v)=>s+v,0) / n;
+
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++){
+    const x = i - xMean;
+    num += x * (ys[i] - yMean);
+    den += x * x;
   }
-  return Array.from(byWeek.values()).sort((a,b)=>a.time-b.time);
+  return den ? (num / den) : 0;
 }
 
 function linearForecast(lastTime, lastValue, slopePerBar, barsForward, stepSec){
@@ -96,55 +78,65 @@ function linearForecast(lastTime, lastValue, slopePerBar, barsForward, stepSec){
   return out;
 }
 
-function linregSlope(values, lookback){
-  // slope per bar op laatste lookback punten
-  const n = lookback;
-  const xs = [];
-  for (let i = 0; i < n; i++) xs.push(i);
-  const xMean = (n - 1) / 2;
+async function fetchKrakenOHLC(pair, intervalMin, wantBars){
+  // Kraken returns: result[pair] = [[time, open, high, low, close, vwap, volume, count], ...]
+  // and result.last = last timestamp
+  const bars = [];
+  let since = 0; // earliest
+  let guard = 0;
 
-  const ys = values.slice(-n);
-  if (ys.some(v => v == null)) return 0;
+  while (bars.length < wantBars && guard < 8) {
+    guard++;
+    const url = `https://api.kraken.com/0/public/OHLC?pair=${encodeURIComponent(pair)}&interval=${intervalMin}&since=${since}`;
+    const r = await fetch(url, { headers: { "accept": "application/json" } });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.error?.[0] || "Kraken HTTP error");
+    if (j?.error?.length) throw new Error(j.error.join(", "));
 
-  const yMean = ys.reduce((s,v)=>s+v,0) / n;
+    const result = j.result || {};
+    const key = Object.keys(result).find(k => k !== "last");
+    const rows = key ? result[key] : null;
+    const last = result.last;
 
-  let num = 0, den = 0;
-  for (let i = 0; i < n; i++){
-    num += (xs[i]-xMean) * (ys[i]-yMean);
-    den += (xs[i]-xMean) * (xs[i]-xMean);
+    if (!Array.isArray(rows) || !rows.length) break;
+
+    for (const row of rows){
+      bars.push({
+        time: Number(row[0]),
+        open: Number(row[1]),
+        high: Number(row[2]),
+        low:  Number(row[3]),
+        close:Number(row[4]),
+        volume:Number(row[6])
+      });
+    }
+
+    // next page
+    since = Number(last || since);
+
+    // safety: if no progress
+    if (!since) break;
   }
-  return den ? (num / den) : 0;
-}
 
-async function fetchBinanceKlines(symbol, interval, limit){
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const r = await fetch(url);
-  const j = await r.json();
-  if (!r.ok) throw new Error(j?.msg || "Binance error");
-  return j.map(k => ({
-    time: Math.floor(k[0]/1000),
-    open: Number(k[1]),
-    high: Number(k[2]),
-    low:  Number(k[3]),
-    close:Number(k[4]),
-    volume:Number(k[5])
-  }));
+  // dedupe + sort
+  const map = new Map();
+  for (const c of bars) map.set(c.time, c);
+  const out = Array.from(map.values()).sort((a,b)=>a.time-b.time);
+
+  // keep last wantBars
+  return out.length > wantBars ? out.slice(out.length - wantBars) : out;
 }
 
 export default async function handler(req, res){
   try{
     const tf = (req.query.tf || "1W").toString();
-    if (!TF_MAP[tf]) return res.status(400).json({ error: "tf must be one of: 15m, 1D, 1W" });
+    if (!TF_CFG[tf]) return res.status(400).json({ error: "tf must be one of: 15m, 1D, 1W" });
 
-    // 15m: 1000 candles max op Binance per call → genoeg voor forest.
-    // 1D/1W: pak daily en resample voor week.
-    let candles;
-    if (tf === "15m"){
-      candles = await fetchBinanceKlines("BTCUSDT", "15m", 1000);
-    } else {
-      const daily = await fetchBinanceKlines("BTCUSDT", "1d", 2000);
-      candles = (tf === "1W") ? resampleToWeekly(daily) : daily;
-    }
+    const { intervalMin, bars } = TF_CFG[tf];
+
+    // Pair keuze: XBTUSD is Kraken's BTC/USD
+    // (Als je liever USDT wil: Kraken heeft vaak XBTUSDT, maar XBTUSD is het meest standaard)
+    let candles = await fetchKrakenOHLC("XBTUSD", intervalMin, bars);
 
     // betrouwbaarheid: laat laatste candle vallen (kan nog bezig zijn)
     if (candles.length > 10) candles = candles.slice(0, -1);
@@ -153,20 +145,18 @@ export default async function handler(req, res){
     const high  = candles.map(c=>c.high);
     const low   = candles.map(c=>c.low);
 
-    // Basis (over prijs) + Forest Z
     const ema20 = ema(close, 20);
     const ema50 = ema(close, 50);
     const a = atr(high, low, close, 14);
 
-    // “forest raw” = afstand t.o.v. ema50 genormaliseerd
     const diff = close.map((c,i)=> (ema50[i]==null ? null : (c - ema50[i])));
-    const lookback = tf === "15m" ? 400 : (tf === "1D" ? 252*2 : 156); // grof maar stabiel
+    const lookback = tf === "15m" ? 400 : (tf === "1D" ? 520 : 156);
     const forestZ = zscore(diff, clamp(lookback, 50, 800));
     const forestSmooth = ema(forestZ, 6);
 
-    // Forest overlay in prijsruimte
-    const mult = tf === "15m" ? 1.2 : 1.6; // visueel prettig; mag je later tunen
-    const forestPrice = candles.map((c,i)=>{
+    // Forest op prijs-chart (EMA20 + z * ATR * mult)
+    const mult = tf === "15m" ? 1.2 : 1.6;
+    const forestPriceLine = candles.map((c,i)=>{
       const base = ema20[i];
       const zz = forestSmooth[i];
       const atrv = a[i];
@@ -175,10 +165,10 @@ export default async function handler(req, res){
     }).filter(Boolean);
 
     // Forecast (stippel)
-    const stepSec = TF_MAP[tf].stepSec;
-    const last = forestPrice[forestPrice.length-1];
-    const forestValues = forestPrice.map(p=>p.value);
-    const slope = linregSlope(forestValues, clamp(tf==="15m"?60:20, 10, 80));
+    const stepSec = intervalMin * 60;
+    const last = forestPriceLine[forestPriceLine.length - 1];
+    const forestVals = forestPriceLine.map(p=>p.value);
+    const slope = linregSlope(forestVals, clamp(tf==="15m"?60:20, 10, 80));
     const forward = tf === "15m" ? 80 : (tf === "1D" ? 30 : 20);
     const forecastLine = last ? linearForecast(last.time, last.value, slope, forward, stepSec) : [];
 
@@ -194,10 +184,12 @@ export default async function handler(req, res){
     res.setHeader("content-type","application/json");
     return res.status(200).json({
       tf,
+      source: "kraken",
+      pair: "XBTUSD",
       candles,
       ema20: candles.map((c,i)=> (ema20[i]==null?null:{time:c.time,value:ema20[i]})).filter(Boolean),
       ema50: candles.map((c,i)=> (ema50[i]==null?null:{time:c.time,value:ema50[i]})).filter(Boolean),
-      forestPriceLine: forestPrice,
+      forestPriceLine,
       forecastLine,
       turningPoints
     });
