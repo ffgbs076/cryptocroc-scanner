@@ -16,7 +16,7 @@ export default async function handler(req, res) {
       candlesTruth,
       candlesWithLive,
       hasLive,
-      forwardWeeks: 4
+      forwardWeeks: 4, // 👈 jij wilde 4 weken vooruit (hint-lijn)
     });
 
     res.setHeader("content-type", "application/json; charset=utf-8");
@@ -31,21 +31,18 @@ export default async function handler(req, res) {
           open: c.open,
           high: c.high,
           low: c.low,
-          close: c.close
+          close: c.close,
         })),
 
-        // prijs-overlay lijnen
-        forestOverlayTruth: out.forestOverlayTruth,
-        forestOverlayLive: out.forestOverlayLive,
-        forestOverlayForward: out.forestOverlayForward,
+        // Overlay op prijs-chart
+        forestOverlayTruth: out.forestOverlayTruth,     // ✅ repaint-vrij (closed weeks)
+        forestOverlayLive: out.forestOverlayLive,       // 👀 preview (mag bewegen)
+        forestOverlayForward: out.forestOverlayForward, // 👀 hint 4 weken vooruit
 
-        // onder de motorkap (handig voor later)
+        // Extra info
         forestZTruth: out.forestZTruth,
-        forestZLive: out.forestZLive,
         bandsNow: out.bandsNow,
-        freezeNow: out.freezeNow,
-
-        regimeLabel: out.regimeLabel
+        regimeLabel: out.regimeLabel,
       })
     );
   } catch (e) {
