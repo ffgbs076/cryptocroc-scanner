@@ -1,63 +1,100 @@
-import { getWeeklyBtcCandlesKraken } from "./_lib/kraken.js";
-import { calculateForest } from "./_lib/forestEngine.js";
-import { clamp, ema, atr, stdev } from "./_lib/indicators.js";
-import { makeForecastProjected } from "./_lib/forecast.js";
+// api/forest.js
+// Return: candles + forest z-score (non-repaint: standaard alleen gesloten weken)
 
-export const config = { runtime: "nodejs" };
+const { getWeeklyBtcCandlesKraken } = require("./_lib/kraken");
+const { ema, atr, stdev, clamp } = require("./_lib/indicators");
 
-export default async function handler(req, res) {
+let CACHE = {
+  ts: 0,
+  dataClosed: null,
+  dataLive: null
+};
+
+function parseBool(v) {
+  return v === "1" || v === "true" || v === "yes";
+}
+
+module.exports = async (req, res) => {
   try {
-    const includeCurrentWeek = String(req.query.includeCurrentWeek || "false") === "true";
-    const wantForecast = String(req.query.forecast || "0") === "1";
+    const includeCurrentWeek = parseBool(req.query?.includeCurrentWeek);
 
-    const candlesAll = await getWeeklyBtcCandlesKraken();
-    const candles = includeCurrentWeek ? candlesAll : candlesAll.slice(0, -1);
+    // Cache 15 min
+    const now = Date.now();
+    const cacheOk = now - CACHE.ts < 15 * 60 * 1000;
 
-    const closes = candles.map(c => c.close);
-    const atr14 = atr(candles, 14);
-    const forestRaw = calculateForest(candles); // z-score-ish, non repaint (op basis van input)
+    let candles;
+    if (cacheOk && includeCurrentWeek && CACHE.dataLive) {
+      candles = CACHE.dataLive;
+    } else if (cacheOk && !includeCurrentWeek && CACHE.dataClosed) {
+      candles = CACHE.dataClosed;
+    } else {
+      candles = await getWeeklyBtcCandlesKraken({ includeCurrentWeek });
 
-    // Forest line (oscillator pane)
-    const forestLine = candles
-      .map((c, i) => (forestRaw[i] == null ? null : ({ time: c.time, value: forestRaw[i] })))
-      .filter(Boolean);
-
-    // Overlay op prijs: close + cappedZ * ATR * multiplier
-    const mult = 0.6;
-    const overlayProjected = candles.map((c, i) => {
-      const z = forestRaw[i];
-      const a = atr14[i];
-      if (z == null || a == null) return null;
-      const cappedZ = clamp(z, -2.5, 2.5);
-      return { time: c.time, value: c.close + cappedZ * a * mult };
-    }).filter(Boolean);
-
-    // Turning points: cross thresholds (confirmed op closed candles)
-    const turningPoints = [];
-    for (let i = 1; i < candles.length; i++) {
-      const prev = forestRaw[i - 1];
-      const cur = forestRaw[i];
-      if (prev == null || cur == null) continue;
-
-      if (prev < -0.2 && cur >= -0.2) turningPoints.push({ time: candles[i].time, type: "up" });
-      if (prev > 0.2 && cur <= 0.2) turningPoints.push({ time: candles[i].time, type: "down" });
+      CACHE.ts = now;
+      if (includeCurrentWeek) CACHE.dataLive = candles;
+      else CACHE.dataClosed = candles;
     }
 
-    const forecastProjected = wantForecast
-      ? makeForecastProjected(candles, forestRaw, atr14, mult)
-      : [];
+    // ========== FOREST ENGINE ==========
+    // Doel: oscillator rond 0 (z-score), minder “bias”.
+    // Basis: (close - EMA50) / stdev(close-EMA50) over lange lookback, dan smoothing.
+    const maPeriod = 50;
+    const lookback = 52 * 3; // ~3 jaar weekly
+    const smoothLen = 6;
 
-    res.status(200).json({
-      source: "kraken",
-      interval: "1w",
-      candles,
-      forestRaw,
-      forestLine,
-      overlayProjected,
-      forecastProjected,
-      turningPoints
+    const closes = candles.map((c) => c.close);
+
+    const ema50 = ema(closes, maPeriod);
+    const diff = closes.map((v, i) => (ema50[i] == null ? null : (v - ema50[i])));
+
+    const dev = stdev(diff.map((x) => x == null ? null : x), lookback);
+
+    const forestRaw = diff.map((d, i) => {
+      if (d == null || dev[i] == null || dev[i] === 0) return null;
+      return d / dev[i]; // z-score-ish
     });
+
+    // Smoothing: EMA over forestRaw (alleen op numbers)
+    const forestRawFilled = forestRaw.map((v) => (v == null ? null : v));
+    const forestSmooth = ema(
+      forestRawFilled.map((v) => (v == null ? null : v)),
+      smoothLen
+    );
+
+    // (optioneel) cap extreme waarden voor leesbaarheid
+    const forest = forestSmooth.map((v) => (v == null ? null : clamp(v, -3, 3)));
+
+    // turningPoints: simpel: crosses van -0.35 en +0.35 (alleen op gesloten candles)
+    const turningPoints = [];
+    const UP = 0.35;
+    const DN = -0.35;
+
+    for (let i = 1; i < forest.length; i++) {
+      const a = forest[i - 1], b = forest[i];
+      if (a == null || b == null) continue;
+
+      if (a <= UP && b > UP) turningPoints.push({ time: candles[i].time, type: "up" });
+      if (a >= DN && b < DN) turningPoints.push({ time: candles[i].time, type: "down" });
+    }
+
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.status(200).send(
+      JSON.stringify(
+        {
+          source: "kraken",
+          interval: "1w",
+          maPeriod,
+          includeCurrentWeek,
+          candles,
+          forest,
+          turningPoints
+        },
+        null,
+        2
+      )
+    );
   } catch (e) {
-    res.status(503).json({ error: e?.message || String(e) });
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.status(500).send(JSON.stringify({ error: String(e?.message || e) }));
   }
-}
+};
